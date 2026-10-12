@@ -3,11 +3,13 @@
 // - AI: nhãn 🔥🐉 Rồng Thần, căn trái, chữ xanh lá
 // - User: nhãn 👾 User, căn phải, chữ trắng
 // - Tự tách code block ``` để hiển thị riêng
+// - Tin AI: code block có kèm Sandbox (LiveCodes online)
 // - Ảnh có thể bấm vào để xem full-size
 
 import React, { useState } from "react";
 import { formatTime, getFileIcon, formatFileSize } from "../utils/format.js";
 import { isImageFile } from "../utils/validate.js";
+import SandboxEmbed from "./SandboxEmbed.js";
 
 export default function MessageBubble({ message }) {
   const isAI = message.role === "ai";
@@ -22,7 +24,6 @@ export default function MessageBubble({ message }) {
 
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
-  // Tách text và code blocks
   const parts = splitTextAndCode(message.text || "");
 
   return (
@@ -97,11 +98,25 @@ export default function MessageBubble({ message }) {
           {/* NỘI DUNG — TÁCH TEXT VÀ CODE */}
           {parts.map((part, idx) => {
             if (part.type === "code") {
-              return <CodeBlock key={idx} language={part.language} code={part.content} />;
+              return (
+                <div key={idx}>
+                  <CodeBlock
+                    language={part.language}
+                    code={part.content}
+                  />
+                  {/* Chỉ hiện Sandbox khi là AI */}
+                  {isAI ? (
+                    <SandboxEmbed
+                      code={part.content}
+                      language={part.language || "javascript"}
+                      title="Sandbox"
+                    />
+                  ) : null}
+                </div>
+              );
             }
             if (part.type === "text") {
-              const trimmed = part.content;
-              if (!trimmed.trim()) return null;
+              if (!part.content.trim()) return null;
               return (
                 <div
                   key={idx}
@@ -110,7 +125,7 @@ export default function MessageBubble({ message }) {
                     wordBreak: "break-word",
                   }}
                 >
-                  {trimmed}
+                  {part.content}
                 </div>
               );
             }
@@ -216,7 +231,6 @@ function splitTextAndCode(text) {
   let match;
 
   while ((match = re.exec(text)) !== null) {
-    // Text trước code block
     if (match.index > lastIndex) {
       const textPart = text.slice(lastIndex, match.index);
       if (textPart.trim()) {
@@ -224,7 +238,6 @@ function splitTextAndCode(text) {
       }
     }
 
-    // Code block
     const language = (match[1] || "").trim();
     const code = match[2] || "";
     parts.push({ type: "code", language, content: code });
@@ -232,7 +245,6 @@ function splitTextAndCode(text) {
     lastIndex = match.index + match[0].length;
   }
 
-  // Text sau code block cuối
   if (lastIndex < text.length) {
     const textPart = text.slice(lastIndex);
     if (textPart.trim()) {
@@ -240,7 +252,6 @@ function splitTextAndCode(text) {
     }
   }
 
-  // Không có code block nào
   if (parts.length === 0) {
     parts.push({ type: "text", content: text });
   }
@@ -249,7 +260,7 @@ function splitTextAndCode(text) {
 }
 
 // ============================================================
-// CODE BLOCK — hiển thị code có copy
+// CODE BLOCK
 // ============================================================
 
 function CodeBlock({ language, code }) {
@@ -276,7 +287,6 @@ function CodeBlock({ language, code }) {
         backgroundColor: "rgba(0,0,0,0.55)",
       }}
     >
-      {/* Thanh trên: ngôn ngữ + copy */}
       <div
         style={{
           display: "flex",
@@ -288,7 +298,12 @@ function CodeBlock({ language, code }) {
           fontSize: 11,
         }}
       >
-        <span style={{ color: "var(--color-text-muted)", textTransform: "uppercase" }}>
+        <span
+          style={{
+            color: "var(--color-text-muted)",
+            textTransform: "uppercase",
+          }}
+        >
           {language || "code"}
         </span>
         <button
@@ -296,7 +311,9 @@ function CodeBlock({ language, code }) {
           onClick={handleCopy}
           className="no-select"
           style={{
-            color: copied ? "var(--color-success)" : "var(--color-text-secondary)",
+            color: copied
+              ? "var(--color-success)"
+              : "var(--color-text-secondary)",
             fontSize: 11,
             fontWeight: 600,
             padding: "2px 8px",
@@ -307,8 +324,6 @@ function CodeBlock({ language, code }) {
           {copied ? "✓ Đã copy" : "Copy"}
         </button>
       </div>
-
-      {/* Code */}
       <pre
         style={{
           margin: 0,
