@@ -1,9 +1,8 @@
 // vite.config.js
 // Nhiệm vụ: Cấu hình Vite cho React + proxy API sang backend.
-// - Port dev: 5173
-// - Proxy /api → http://localhost:3000 (backend Express)
-// - Cho phép truy cập từ điện thoại trong cùng mạng LAN
-//   (host: true — dùng khi test trên Android / iPhone thật)
+// - Cho phép JSX trong file .js (theo sơ đồ dự án)
+// - Proxy /api → http://localhost:3000 (backend Express khi dev)
+// - Cho phép truy cập từ điện thoại trong LAN
 // - Không tự ý đổi base nếu chưa có yêu cầu.
 
 import { defineConfig } from "vite";
@@ -12,12 +11,24 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
 
+  // Cho phép JSX trong file .js (Vite mặc định chỉ chấp nhận JSX trong .jsx)
+  esbuild: {
+    loader: "jsx",
+    include: /src\/.*\.js$/,
+    exclude: [],
+  },
+
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: { ".js": "jsx" },
+    },
+  },
+
   server: {
     port: 5173,
-    host: true, // cho phép truy cập qua IP LAN khi test mobile
+    host: true,
     strictPort: false,
     proxy: {
-      // Mọi request /api/* sẽ được chuyển sang backend Express
       "/api": {
         target: "http://localhost:3000",
         changeOrigin: true,
