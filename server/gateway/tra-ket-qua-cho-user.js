@@ -1,27 +1,10 @@
 // server/gateway/tra-ket-qua-cho-user.js
 // Nhiệm vụ: Rồng Thần trả kết quả cho User.
-// Quy tắc dự án (PHẦN 02, luồng 1-3):
-//   - RỒNG THẦN trả kết quả cho User.
-//   - Không báo thành công khi backend chưa xác nhận.
 
 import { createMessage } from "../db/messages.js";
 import { touchConversation } from "../db/conversations.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
 
-// ============================================================
-// TRẢ KẾT QUẢ
-// ============================================================
-
-/**
- * Lưu tin nhắn AI vào DB rồi trả về cho tầng route (route sẽ gửi HTTP).
- *
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.text
- * @param {object} [p.meta]
- * @returns {Promise<{ok: boolean, aiMessage?: object, error?: string}>}
- */
 export async function traKetQuaChoUser({
   userId,
   conversationId,
@@ -48,7 +31,7 @@ export async function traKetQuaChoUser({
 
     await touchConversation(conversationId);
 
-    await logInfo("Rồng Thần trả kết quả cho User", {
+    await logInfo("Rồng Thần: đã trả kết quả cho User", {
       userId,
       conversationId,
       textLength: String(text).length,
@@ -56,7 +39,7 @@ export async function traKetQuaChoUser({
 
     return { ok: true, aiMessage };
   } catch (err) {
-    await logWarn("Rồng Thần không lưu được kết quả", {
+    await logWarn("Rồng Thần: không lưu được kết quả", {
       userId,
       conversationId,
       error: err?.message || String(err),

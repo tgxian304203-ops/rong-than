@@ -1,24 +1,9 @@
 // server/boss/phan-tich-yeu-cau.js
-// Nhiệm vụ: BOSS phân tích yêu cầu User để biết:
-//   - Cần tra Web không?
-//   - Có liên quan code không?
-//   - Cần chia việc cho lính như thế nào?
+// Nhiệm vụ: BOSS phân tích yêu cầu User.
 
 import { moveToStep, WORK_STEP, WORK_STATUS } from "../state/luu-trang-thai.js";
 import { logInfo } from "../logs/ghi-log.js";
 
-// ============================================================
-// PHÂN TÍCH
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.userRequest
- * @param {string} [p.userLabel]
- * @returns {Promise<{ok: boolean, analysis: object, error?: string}>}
- */
 export async function phanTichYeuCau({
   userId,
   conversationId,
@@ -42,40 +27,23 @@ export async function phanTichYeuCau({
     WORK_STATUS.IN_PROGRESS
   );
 
-  await logInfo("BOSS phân tích yêu cầu", {
+  await logInfo("BOSS: phân tích yêu cầu xong", {
     userId,
     conversationId,
-    analysis,
+    needWeb: analysis.needWeb,
+    needCode: analysis.needCode,
+    taskType: analysis.estimatedTaskType,
   });
 
   return { ok: true, analysis };
 }
 
-// ============================================================
-// NHẬN DIỆN ĐƠN GIẢN (không gọi model)
-// ============================================================
-// Đây là heuristic; BOSS vẫn có thể quyết định khác khi gọi model.
-
 function detectNeedWeb(req) {
   const k = req.toLowerCase();
   const keywords = [
-    "mới nhất",
-    "hôm nay",
-    "hiện tại",
-    "tin tức",
-    "tra cứu",
-    "tìm kiếm",
-    "google",
-    "web",
-    "url",
-    "http",
-    "link",
-    "nguồn",
-    "số liệu",
-    "thống kê",
-    "giá",
-    "tỷ giá",
-    "thời tiết",
+    "mới nhất", "hôm nay", "hiện tại", "tin tức", "tra cứu",
+    "tìm kiếm", "google", "web", "url", "http", "link",
+    "nguồn", "số liệu", "thống kê", "giá", "tỷ giá", "thời tiết",
   ];
   return keywords.some((w) => k.includes(w));
 }
@@ -83,26 +51,9 @@ function detectNeedWeb(req) {
 function detectNeedCode(req) {
   const k = req.toLowerCase();
   const keywords = [
-    "code",
-    "lập trình",
-    "hàm",
-    "function",
-    "script",
-    "js",
-    "javascript",
-    "python",
-    "react",
-    "node",
-    "html",
-    "css",
-    "sql",
-    "api",
-    "bug",
-    "lỗi",
-    "sửa",
-    "fix",
-    "viết",
-    "tạo",
+    "code", "lập trình", "hàm", "function", "script", "js",
+    "javascript", "python", "react", "node", "html", "css",
+    "sql", "api", "bug", "lỗi", "sửa", "fix", "viết", "tạo",
   ];
   return keywords.some((w) => k.includes(w));
 }

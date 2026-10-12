@@ -1,25 +1,9 @@
 // server/boss/viet-format.js
 // Nhiệm vụ: BOSS viết format điều phối lính cho Tiểu Não.
-// Quy tắc dự án (PHẦN 01, mục 3, 15):
-//   - BOSS không trực tiếp làm yêu cầu mà viết format để điều phối lính.
-//   - Format gồm: taskType, goal, input, constraints, expectedOutput, context.
 
 import { moveToStep, WORK_STEP, WORK_STATUS } from "../state/luu-trang-thai.js";
 import { logInfo } from "../logs/ghi-log.js";
 
-// ============================================================
-// VIẾT FORMAT
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.userRequest
- * @param {object} [p.analysis]        - từ phan-tich-yeu-cau
- * @param {string} [p.webContext]      - chuỗi kết quả web (nếu có)
- * @returns {Promise<{ok: boolean, format: object, error?: string}>}
- */
 export async function vietFormat({
   userId,
   conversationId,
@@ -53,10 +37,12 @@ export async function vietFormat({
     WORK_STATUS.WAITING_SOLDIER
   );
 
-  await logInfo("BOSS viết format điều phối lính", {
+  await logInfo("BOSS: đã viết format điều phối lính", {
     userId,
     conversationId,
     taskType,
+    needWeb: analysis?.needWeb,
+    needCode: analysis?.needCode,
   });
 
   return { ok: true, format };

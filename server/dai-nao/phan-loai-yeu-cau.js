@@ -55,6 +55,11 @@ function buildClassifyPrompt(userRequest) {
  * @returns {Promise<{ok: boolean, label: string, model?: string, error?: string}>}
  */
 export async function phanLoaiYeuCau({ userId, userRequest, signal }) {
+  await logInfo("Đại Não: bắt đầu phân loại yêu cầu", {
+    userId,
+    textLength: String(userRequest || "").length,
+  });
+
   // Ưu tiên model đang sử dụng nếu có
   let candidates = layDanhSachUngVien(DAI_NAO_TASK.CLASSIFY);
   const active = await layModelDangSuDung(DAI_NAO_TASK.CLASSIFY);
@@ -69,6 +74,7 @@ export async function phanLoaiYeuCau({ userId, userRequest, signal }) {
 
   const filtered = await locUngVien(candidates);
   if (filtered.length === 0) {
+    await logWarn("Đại Não: không có model phân loại nào khả dụng", { userId });
     return { ok: false, label: "", error: "Không có model ứng viên nào" };
   }
 
@@ -77,13 +83,26 @@ export async function phanLoaiYeuCau({ userId, userRequest, signal }) {
   for (const model of filtered) {
     const keys = await listKeysByProvider(userId, model.provider);
     const usable = keys.filter((k) => k.quota !== "out");
-    if (usable.length === 0) continue;
+    if (usable.length === 0) {
+      await logWarn("Đại Não: model không có key khả dụng", {
+        userId,
+        model: model.name,
+        provider: model.provider,
+      });
+      continue;
+    }
 
     const mod = MODULES[model.provider];
     if (!mod) continue;
 
     for (const key of usable) {
       try {
+        await logInfo("Đại Não: đang gọi model phân loại", {
+          userId,
+          model: model.name,
+          provider: model.provider,
+        });
+
         const res = await mod.chat({
           rawKey: key.rawKey,
           model: model.name,
@@ -102,30 +121,43 @@ export async function phanLoaiYeuCau({ userId, userRequest, signal }) {
         ) {
           await baoCaoConDung(model.name, model.provider);
           await datModelDangSuDung(DAI_NAO_TASK.CLASSIFY, model.name);
-          await logInfo("Đại Não phân loại xong", {
+          await logInfo("Đại Não: phân loại xong", {
             userId,
             label,
             model: model.name,
+            provider: model.provider,
           });
           return { ok: true, label, model: model.name };
         }
 
-        // Nhãn lạ → thử model khác
-        await logWarn("Đại Não phân loại trả về nhãn lạ", {
+        await logWarn("Đại Não: model trả về nhãn lạ", {
           label,
           model: model.name,
         });
       } catch (err) {
         const msg = String(err?.message || "").toLowerCase();
-        if (msg.includes("quota") || msg.includes("429")) {
+
+        if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
           await baoCaoLoi(model.name, model.provider, "Hết quota");
+          await logWarn("Đại Não: model hết quota, xoay model/key", {
+            userId,
+            model: model.name,
+            provider: model.provider,
+          });
           continue;
         }
+
         await baoCaoLoi(model.name, model.provider, err?.message || "Lỗi");
+        await logWarn("Đại Não: gọi model phân loại lỗi", {
+          userId,
+          model: model.name,
+          error: err?.message || String(err),
+        });
       }
     }
   }
 
+  await logWarn("Đại Não: không phân loại được yêu cầu", { userId });
   return { ok: false, label: "", error: "Không phân loại được yêu cầu" };
 }
 

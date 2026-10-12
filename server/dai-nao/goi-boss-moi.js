@@ -1,10 +1,5 @@
 // server/dai-nao/goi-boss-moi.js
 // Nhiệm vụ: Khi BOSS cũ hết quota hoặc lỗi, Đại Não gọi BOSS mới lên thay.
-// Quy tắc dự án (PHẦN 01, mục 5):
-//   - Đại Não gọi BOSS mới từ key của phần Đại Não.
-//   - BOSS mới phải đọc lại yêu cầu User.
-//   - BOSS mới xác định tình trạng hiện tại đang làm gì, đã làm tới đâu.
-//   - BOSS mới tiếp tục nhiệm vụ.
 
 import { markReplaced } from "../db/bossSessions.js";
 import { loadWorkState } from "../state/luu-trang-thai.js";
@@ -12,21 +7,6 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 import { chonBossTheoYeuCau } from "./chon-boss-theo-yeu-cau.js";
 import { goiBoss } from "./goi-boss.js";
 
-// ============================================================
-// GỌI BOSS MỚI
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {object} [p.oldSession]  - phiên BOSS cũ (nếu có)
- * @param {Array}  p.messages      - tin nhắn hội thoại đầy đủ
- * @param {number} [p.temperature]
- * @param {number} [p.maxTokens]
- * @param {AbortSignal} [p.signal]
- * @returns {Promise<{ok: boolean, text?: string, session?: object, boss?: object, handoff?: object, error?: string}>}
- */
 export async function goiBossMoi({
   userId,
   conversationId,
@@ -36,7 +16,11 @@ export async function goiBossMoi({
   maxTokens = 4096,
   signal,
 }) {
-  // ===== 1. Đọc lại yêu cầu User + tình trạng =====
+  await logInfo("Đại Não: gọi BOSS mới thay BOSS cũ", {
+    userId,
+    conversationId,
+  });
+
   const workState = await loadWorkState(userId, conversationId);
   const handoff = {
     userRequest: workState?.userRequest || null,
@@ -45,7 +29,6 @@ export async function goiBossMoi({
     context: workState?.context || {},
   };
 
-  // ===== 2. Đánh dấu phiên BOSS cũ là "replaced" =====
   if (oldSession && oldSession._id) {
     try {
       await markReplaced(String(oldSession._id));
@@ -54,9 +37,12 @@ export async function goiBossMoi({
     }
   }
 
-  // ===== 3. Chọn BOSS mới =====
   const picked = await chonBossTheoYeuCau({ userId });
   if (!picked.ok) {
+    await logWarn("Đại Não: không có BOSS mới khả dụng", {
+      userId,
+      conversationId,
+    });
     return {
       ok: false,
       handoff,
@@ -64,13 +50,17 @@ export async function goiBossMoi({
     };
   }
 
-  // ===== 4. Chuẩn bị messages có bàn giao =====
   const handoffMessage = buildHandoffMessage(handoff);
   const messagesWithHandoff = handoffMessage
     ? [...messages, { role: "system", content: handoffMessage }]
     : messages;
 
-  // ===== 5. Gọi BOSS mới =====
+  await logInfo("Đại Não: BOSS mới đang xử lý", {
+    userId,
+    conversationId,
+    boss: picked.boss.name,
+  });
+
   const res = await goiBoss({
     userId,
     conversationId,
@@ -82,13 +72,13 @@ export async function goiBossMoi({
   });
 
   if (res.ok) {
-    await logInfo("Gọi BOSS mới thành công", {
+    await logInfo("Đại Não: BOSS mới hoàn thành", {
       userId,
       conversationId,
       boss: picked.boss.name,
     });
   } else {
-    await logWarn("Gọi BOSS mới thất bại", {
+    await logWarn("Đại Não: BOSS mới cũng thất bại", {
       userId,
       conversationId,
       boss: picked.boss.name,
@@ -105,10 +95,6 @@ export async function goiBossMoi({
     error: res.error,
   };
 }
-
-// ============================================================
-// XÂY MESSAGES BÀN GIAO
-// ============================================================
 
 function buildHandoffMessage(handoff) {
   if (!handoff || !handoff.userRequest) return null;

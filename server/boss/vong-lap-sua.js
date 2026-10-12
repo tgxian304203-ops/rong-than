@@ -1,10 +1,5 @@
 // server/boss/vong-lap-sua.js
 // Nhiệm vụ: Vòng lặp sửa code cho tới khi Sandbox ĐÚNG mới thôi.
-// Quy tắc dự án (PHẦN 02, luồng 3):
-//   - BOSS kiểm tra chạy thử trên Sandbox.
-//   - Đúng → trả về Rồng Thần.
-//   - Sai → BOSS viết format cho lính sửa.
-//   - Lặp lại cho tới khi ĐÚNG mới thôi.
 
 import { LIMITS } from "../config/limits.js";
 import { chonLinhTheoNhiemVu } from "../tieu-nao/chon-linh-theo-nhiem-vu.js";
@@ -14,29 +9,6 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 import { kiemTraSandbox } from "./kiem-tra-sandbox.js";
 import { vietFormatSua } from "./viet-format-sua.js";
 
-// ============================================================
-// VÒNG LẶP
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.bossSessionId
- * @param {string} p.language
- * @param {string} p.initialCode
- * @param {string} [p.testCode]
- * @param {string} [p.goal]
- * @param {AbortSignal} [p.signal]
- * @returns {Promise<{
- *   ok: boolean,
- *   finalCode?: string,
- *   version?: number,
- *   attempts: number,
- *   lastRun?: object,
- *   error?: string,
- * }>}
- */
 export async function vongLapSua({
   userId,
   conversationId,
@@ -51,10 +23,21 @@ export async function vongLapSua({
   let attempts = 0;
   let lastRun = null;
 
+  await logInfo("BOSS: bắt đầu vòng lặp sửa code", {
+    userId,
+    conversationId,
+    language,
+    maxAttempts: LIMITS.SANDBOX_MAX_FIX_ITERATIONS,
+  });
+
   while (attempts < LIMITS.SANDBOX_MAX_FIX_ITERATIONS) {
     attempts += 1;
 
-    // ===== Kiểm tra Sandbox =====
+    await logInfo(`BOSS: vòng lặp sửa — lần thử ${attempts}`, {
+      userId,
+      conversationId,
+    });
+
     const check = await kiemTraSandbox({
       userId,
       conversationId,
@@ -65,9 +48,8 @@ export async function vongLapSua({
     });
     lastRun = check;
 
-    // ===== Nếu PASS → dừng, trả kết quả =====
     if (check.ok) {
-      await logInfo("Vòng lặp sửa: PASS", {
+      await logInfo("BOSS: vòng lặp sửa — PASS", {
         userId,
         conversationId,
         attempts,
@@ -82,9 +64,8 @@ export async function vongLapSua({
       };
     }
 
-    // ===== Nếu hết lượt → trả thất bại =====
     if (attempts >= LIMITS.SANDBOX_MAX_FIX_ITERATIONS) {
-      await logWarn("Vòng lặp sửa: hết lượt", {
+      await logWarn("BOSS: vòng lặp sửa — hết lượt", {
         userId,
         conversationId,
         attempts,
@@ -99,7 +80,6 @@ export async function vongLapSua({
       };
     }
 
-    // ===== Nếu FAIL → viết format sửa và gọi lính =====
     const fixFormat = await vietFormatSua({
       userId,
       conversationId,
@@ -111,6 +91,9 @@ export async function vongLapSua({
       language,
     });
     if (!fixFormat.ok) {
+      await logWarn("BOSS: không viết được format sửa", {
+        error: fixFormat.error,
+      });
       return {
         ok: false,
         finalCode: code,
@@ -120,7 +103,6 @@ export async function vongLapSua({
       };
     }
 
-    // Chọn lính sửa
     const pick = await chonLinhTheoNhiemVu({
       userId,
       taskType: "fix-code",
@@ -135,7 +117,6 @@ export async function vongLapSua({
       };
     }
 
-    // Tạo task cho lính sửa
     const task = await openTask({
       userId,
       conversationId,
@@ -144,7 +125,13 @@ export async function vongLapSua({
       payload: fixFormat.format,
     });
 
-    // Gọi lính sửa
+    await logInfo("BOSS: gọi lính sửa code", {
+      userId,
+      conversationId,
+      attempt: attempts,
+      soldier: pick.soldier.name,
+    });
+
     const fixed = await goiLinh({
       userId,
       taskId: String(task._id),
@@ -157,15 +144,13 @@ export async function vongLapSua({
     });
 
     if (!fixed.ok || !fixed.text) {
-      await logWarn("Vòng lặp sửa: lính sửa thất bại", {
-        attempts,
+      await logWarn("BOSS: lính sửa thất bại", {
+        attempt: attempts,
         error: fixed.error,
       });
-      // Không thoát — thử lại với format mới ở lượt kế
       continue;
     }
 
-    // Cập nhật code = code mới
     code = extractCode(fixed.text, language) || fixed.text;
   }
 
@@ -177,10 +162,6 @@ export async function vongLapSua({
     error: "Vòng lặp sửa vượt quá giới hạn",
   };
 }
-
-// ============================================================
-// MESSAGES CHO LÍNH SỬA
-// ============================================================
 
 function buildFixMessages(format) {
   const lines = [
@@ -220,14 +201,9 @@ function buildFixMessages(format) {
   ];
 }
 
-// ============================================================
-// TÁCH CODE TỪ KẾT QUẢ LÍNH
-// ============================================================
-
 function extractCode(text, language = "") {
   if (typeof text !== "string") return "";
 
-  // Tìm ```<lang>\n...\n```
   const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
   let match;
   let best = "";

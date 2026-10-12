@@ -1,9 +1,5 @@
 // server/tieu-nao/goi-linh.js
 // Nhiệm vụ: Gọi lính lên làm việc BOSS giao.
-// - Chọn key khả dụng từ nhóm Tiểu Não.
-// - Xoay key khi hết quota (đủ vòng).
-// - Báo cáo trạng thái vào modelHealth.
-// - Tạo subtask (lính đang làm việc).
 
 import { listKeysByProvider, updateQuota } from "../db/tieuNaoKeys.js";
 import { saveResult } from "../db/taskResults.js";
@@ -21,18 +17,6 @@ const MODULES = { groq, gemini, openrouter };
 // GỌI LÍNH
 // ============================================================
 
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.taskId          - _id của task BOSS đã tạo
- * @param {object} p.soldier         - { name, provider }
- * @param {Array}  p.messages        - tin nhắn cho lính
- * @param {object} p.payload         - format BOSS giao (để lưu vào subtask)
- * @param {number} [p.temperature]
- * @param {number} [p.maxTokens]
- * @param {AbortSignal} [p.signal]
- * @returns {Promise<{ok: boolean, text?: string, usage?: object, subTaskId?: string, keyId?: string, error?: string}>}
- */
 export async function goiLinh({
   userId,
   taskId,
@@ -52,8 +36,19 @@ export async function goiLinh({
     return { ok: false, error: `Chưa hỗ trợ provider ${soldier.provider}` };
   }
 
+  await logInfo("Tiểu Não: bắt đầu gọi lính", {
+    userId,
+    taskId,
+    soldier: soldier.name,
+    provider: soldier.provider,
+  });
+
   const keys = await listKeysByProvider(userId, soldier.provider);
   if (!keys || keys.length === 0) {
+    await logWarn("Tiểu Não: không có key cho lính", {
+      userId,
+      provider: soldier.provider,
+    });
     return {
       ok: false,
       error: `Không có key Tiểu Não nào cho ${soldier.provider}`,
@@ -62,7 +57,6 @@ export async function goiLinh({
 
   const errors = [];
 
-  // Xoay key đủ vòng
   for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
     let anyAvailable = false;
 
@@ -70,7 +64,6 @@ export async function goiLinh({
       if (key.quota === "out") continue;
       anyAvailable = true;
 
-      // Tạo subtask — lính đang làm việc
       const sub = await batDauLamViec({
         taskId,
         soldierModel: soldier.name,
@@ -93,7 +86,6 @@ export async function goiLinh({
         if (res.ok) {
           await baoCaoConDung(soldier.name, soldier.provider);
 
-          // Ghi kết quả subtask
           await saveResult({
             taskId,
             subTaskId,
@@ -104,7 +96,7 @@ export async function goiLinh({
 
           await ketThucLamViec(subTaskId);
 
-          await logInfo("Gọi lính thành công", {
+          await logInfo("Tiểu Não: lính hoàn thành", {
             userId,
             taskId,
             soldier: soldier.name,
@@ -123,7 +115,6 @@ export async function goiLinh({
       } catch (err) {
         const msg = String(err?.message || "").toLowerCase();
 
-        // Lỗi quota → đánh dấu key hết, ghi subtask lỗi, thử key khác
         if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
           await updateQuota(key._id, "out");
           await baoCaoHetQuota(soldier.name, soldier.provider);
@@ -135,28 +126,24 @@ export async function goiLinh({
             meta: { error: err?.message || "Hết quota", model: soldier.name },
           });
           await baoLoiLamViec(subTaskId);
-          await logWarn("Key Tiểu Não hết quota khi gọi lính", {
+          await logWarn("Tiểu Não: key hết quota, xoay key", {
+            userId,
             keyId: String(key._id),
             soldier: soldier.name,
           });
           continue;
         }
 
-        // Lỗi key sai
-        if (
-          msg.includes("invalid") ||
-          msg.includes("401") ||
-          msg.includes("403")
-        ) {
+        if (msg.includes("invalid") || msg.includes("401") || msg.includes("403")) {
           await updateQuota(key._id, "out");
           await baoLoiLamViec(subTaskId);
-          await logWarn("Key Tiểu Não không hợp lệ", {
+          await logWarn("Tiểu Não: key không hợp lệ", {
+            userId,
             keyId: String(key._id),
           });
           continue;
         }
 
-        // Lỗi khác
         await baoCaoLoi(soldier.name, soldier.provider, err?.message || "Lỗi");
         await saveResult({
           taskId,
@@ -167,11 +154,22 @@ export async function goiLinh({
         });
         await baoLoiLamViec(subTaskId);
         errors.push(err?.message || "Lỗi không rõ");
+        await logWarn("Tiểu Não: lính gọi lỗi", {
+          userId,
+          soldier: soldier.name,
+          error: err?.message || String(err),
+        });
       }
     }
 
     if (!anyAvailable) break;
   }
+
+  await logWarn("Tiểu Não: gọi lính thất bại", {
+    userId,
+    soldier: soldier.name,
+    errors: errors.join(" | "),
+  });
 
   return {
     ok: false,

@@ -1,22 +1,17 @@
 // server/dai-nao/model-dang-su-dung.js
 // Nhiệm vụ: Đọc/ghi model Đại Não đang sử dụng cho từng loại nhiệm vụ.
-// Quy tắc dự án:
-//   - Khi BOSS hết quota/lỗi → Đại Não gọi BOSS mới từ key Đại Não.
-//   - Ghi lại model đang dùng để truy vết.
 
 import {
   setActiveModel,
   getActiveModel,
   listAll,
 } from "../db/daiNaoModels.js";
+import { logInfo } from "../logs/ghi-log.js";
 
 // ============================================================
 // ĐỌC
 // ============================================================
 
-/**
- * @param {string} taskType - "classify" | "select-model" | "call-boss"
- */
 export async function layModelDangSuDung(taskType) {
   return getActiveModel(taskType);
 }
@@ -34,11 +29,15 @@ export async function lietKeModelDangSuDung() {
 // GHI
 // ============================================================
 
-/**
- * Đặt model đang sử dụng cho 1 taskType.
- */
 export async function datModelDangSuDung(taskType, modelName) {
-  return setActiveModel(taskType, modelName);
+  const ok = await setActiveModel(taskType, modelName);
+  if (ok) {
+    await logInfo("Đại Não: đặt model đang sử dụng", {
+      taskType,
+      modelName,
+    });
+  }
+  return ok;
 }
 
 export default {

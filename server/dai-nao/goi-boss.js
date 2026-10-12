@@ -1,9 +1,5 @@
 // server/dai-nao/goi-boss.js
 // Nhiệm vụ: Gọi model lên làm BOSS.
-// - Chọn key khả dụng từ nhóm Đại Não.
-// - Xoay key khi hết quota (đủ vòng).
-// - Báo cáo trạng thái model vào modelHealth.
-// - Tạo phiên BOSS trong bossSessions.
 
 import { listKeysByProvider, updateQuota } from "../db/daiNaoKeys.js";
 import { createSession } from "../db/bossSessions.js";
@@ -20,18 +16,6 @@ const MODULES = { groq, gemini, openrouter };
 // GỌI BOSS
 // ============================================================
 
-/**
- * Gọi BOSS với 1 prompt.
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {object} p.boss        - { name, provider } từ chon-boss-theo-yeu-cau
- * @param {Array}  p.messages
- * @param {number} [p.temperature]
- * @param {number} [p.maxTokens]
- * @param {AbortSignal} [p.signal]
- * @returns {Promise<{ok: boolean, text?: string, usage?: object, session?: object, keyId?: string, error?: string}>}
- */
 export async function goiBoss({
   userId,
   conversationId,
@@ -50,14 +34,24 @@ export async function goiBoss({
     return { ok: false, error: `Chưa hỗ trợ provider ${boss.provider}` };
   }
 
+  await logInfo("BOSS: bắt đầu gọi", {
+    userId,
+    conversationId,
+    boss: boss.name,
+    provider: boss.provider,
+  });
+
   const keys = await listKeysByProvider(userId, boss.provider);
   if (!keys || keys.length === 0) {
+    await logWarn("BOSS: không có key nào", {
+      userId,
+      provider: boss.provider,
+    });
     return { ok: false, error: `Không có key nào cho ${boss.provider}` };
   }
 
   const errors = [];
 
-  // Xoay key đủ vòng
   for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
     let anyAvailable = false;
 
@@ -86,11 +80,12 @@ export async function goiBoss({
             keyId: String(key._id),
           });
 
-          await logInfo("Gọi BOSS thành công", {
+          await logInfo("BOSS: gọi thành công", {
             userId,
             conversationId,
             boss: boss.name,
             provider: boss.provider,
+            keyId: String(key._id),
           });
 
           return {
@@ -107,7 +102,8 @@ export async function goiBoss({
         if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
           await updateQuota(key._id, "out");
           await baoCaoHetQuota(boss.name, boss.provider);
-          await logWarn("Key Đại Não hết quota khi gọi BOSS", {
+          await logWarn("BOSS: key hết quota, xoay key", {
+            userId,
             keyId: String(key._id),
             boss: boss.name,
           });
@@ -116,7 +112,8 @@ export async function goiBoss({
 
         if (msg.includes("invalid") || msg.includes("401") || msg.includes("403")) {
           await updateQuota(key._id, "out");
-          await logWarn("Key Đại Não không hợp lệ", {
+          await logWarn("BOSS: key không hợp lệ, xoay key", {
+            userId,
             keyId: String(key._id),
           });
           continue;
@@ -124,11 +121,22 @@ export async function goiBoss({
 
         await baoCaoLoi(boss.name, boss.provider, err?.message || "Lỗi");
         errors.push(err?.message || "Lỗi không rõ");
+        await logWarn("BOSS: gọi lỗi", {
+          userId,
+          boss: boss.name,
+          error: err?.message || String(err),
+        });
       }
     }
 
     if (!anyAvailable) break;
   }
+
+  await logWarn("BOSS: thất bại sau tất cả nỗ lực", {
+    userId,
+    boss: boss.name,
+    errors: errors.join(" | "),
+  });
 
   return {
     ok: false,
