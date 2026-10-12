@@ -45,6 +45,21 @@ export async function sendMessage({
 }
 
 // ============================================================
+// SỬA TIẾP (RESUME)
+// ============================================================
+
+export async function fixContinue({ conversationId, signal }) {
+  if (!conversationId) {
+    throw new Error("Thiếu conversationId để sửa tiếp");
+  }
+  return api.post(
+    "/chat/fix-continue",
+    { conversationId: String(conversationId) },
+    { signal }
+  );
+}
+
+// ============================================================
 // LẤY HỘI THOẠI
 // ============================================================
 
@@ -60,17 +75,9 @@ export async function getMessages(conversationId) {
   );
 }
 
-// ============================================================
-// LỊCH SỬ — LẤY TẤT CẢ
-// ============================================================
-
 export async function listRecentConversations(_opts = {}) {
   return api.get(`/chat/conversations/recent`);
 }
-
-// ============================================================
-// TẠO HỘI THOẠI
-// ============================================================
 
 export async function createConversation({
   projectId = null,
@@ -79,10 +86,6 @@ export async function createConversation({
   return api.post("/chat/conversations", { projectId, title });
 }
 
-// ============================================================
-// XÓA 1 HỘI THOẠI
-// ============================================================
-
 export async function deleteConversation(conversationId) {
   if (!conversationId) throw new Error("Thiếu conversationId");
   return api.del(
@@ -90,17 +93,9 @@ export async function deleteConversation(conversationId) {
   );
 }
 
-// ============================================================
-// XÓA TẤT CẢ HỘI THOẠI (không thuộc dự án)
-// ============================================================
-
 export async function deleteAllConversations() {
   return api.del(`/chat/conversations/all`);
 }
-
-// ============================================================
-// ĐỔI TÊN HỘI THOẠI
-// ============================================================
 
 export async function renameConversation(conversationId, title) {
   if (!conversationId) throw new Error("Thiếu conversationId");

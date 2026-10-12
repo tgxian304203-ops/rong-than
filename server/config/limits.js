@@ -26,9 +26,10 @@ export const LIMITS = {
   // ============================================================
   SANDBOX_TIMEOUT_MS: env.SANDBOX_TIMEOUT_MS,
 
-  // Số vòng lặp sửa code tối đa.
-  // Giảm xuống 3 để tránh Render timeout (free tier 100s).
-  SANDBOX_MAX_FIX_ITERATIONS: 3,
+  // Số vòng lặp sửa code tối đa MỖI LẦN user gửi yêu cầu.
+  // Hết vòng → trả code + thông báo "cần sửa tiếp".
+  // User bấm nút "Sửa tiếp" → tiếp tục từ code hiện tại.
+  SANDBOX_MAX_FIX_ITERATIONS: 5,
 
   // ============================================================
   // TIN NHẮN / TỆP

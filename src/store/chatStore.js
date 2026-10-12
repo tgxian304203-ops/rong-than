@@ -1,7 +1,6 @@
 // src/store/chatStore.js
 // Nhiệm vụ: Quản lý hội thoại và tin nhắn.
-// - Lịch sử: TẤT CẢ hội thoại không thuộc dự án
-// - Có hàm deleteAllConversations
+// - Có hàm fixContinue() cho nút "Sửa tiếp"
 
 import React, {
   createContext,
@@ -19,6 +18,7 @@ export function ChatProvider({ children }) {
   const [messages, setMessages] = useState([]);
   const [recentConversations, setRecentConversations] = useState([]);
   const [sending, setSending] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const [error, setError] = useState(null);
   const [abortController, setAbortController] = useState(null);
 
@@ -119,7 +119,6 @@ export function ChatProvider({ children }) {
           return next;
         });
 
-        // Reload lịch sử để cập nhật tên hội thoại mới
         try {
           await loadRecentConversations();
         } catch {
@@ -152,6 +151,62 @@ export function ChatProvider({ children }) {
   );
 
   // ============================================================
+  // SỬA TIẾP (RESUME)
+  // ============================================================
+  const fixContinue = useCallback(async () => {
+    if (!activeConversationId) {
+      return { ok: false, error: "Chưa có hội thoại để sửa tiếp" };
+    }
+
+    setFixing(true);
+    setError(null);
+
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    // Hiển thị tin user "[Sửa tiếp]"
+    const tempUserMsg = {
+      id: `temp-fix-${Date.now()}`,
+      role: "user",
+      text: "🔧 Sửa tiếp",
+      attachments: [],
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+    setMessages((prev) => [...prev, tempUserMsg]);
+
+    try {
+      const res = await chatApi.fixContinue({
+        conversationId: activeConversationId,
+        signal: controller.signal,
+      });
+
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
+        const next = [...withoutTemp];
+        if (res?.aiMessage) next.push(res.aiMessage);
+        return next;
+      });
+
+      return { ok: true, aiMessage: res?.aiMessage };
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempUserMsg.id
+            ? { ...m, pending: false, failed: true }
+            : m
+        )
+      );
+      const msg = err?.message || "Sửa tiếp thất bại";
+      setError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      setFixing(false);
+      setAbortController(null);
+    }
+  }, [activeConversationId]);
+
+  // ============================================================
   // HỦY GỬI
   // ============================================================
   const cancelSend = useCallback(() => {
@@ -159,11 +214,12 @@ export function ChatProvider({ children }) {
       abortController.abort();
       setAbortController(null);
       setSending(false);
+      setFixing(false);
     }
   }, [abortController]);
 
   // ============================================================
-  // LỊCH SỬ — LẤY TẤT CẢ
+  // LỊCH SỬ
   // ============================================================
   const loadRecentConversations = useCallback(async () => {
     setError(null);
@@ -179,7 +235,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   // ============================================================
-  // XÓA 1 HỘI THOẠI
+  // XÓA HỘI THOẠI
   // ============================================================
   const deleteConversation = useCallback(
     async (conversationId) => {
@@ -203,9 +259,6 @@ export function ChatProvider({ children }) {
     [activeConversationId]
   );
 
-  // ============================================================
-  // XÓA TẤT CẢ HỘI THOẠI
-  // ============================================================
   const deleteAllConversations = useCallback(async () => {
     setError(null);
     try {
@@ -229,6 +282,7 @@ export function ChatProvider({ children }) {
     setMessages([]);
     setError(null);
     setSending(false);
+    setFixing(false);
   }, []);
 
   const value = useMemo(
@@ -237,10 +291,12 @@ export function ChatProvider({ children }) {
       messages,
       recentConversations,
       sending,
+      fixing,
       error,
       createConversation,
       openConversation,
       sendMessage,
+      fixContinue,
       cancelSend,
       loadRecentConversations,
       deleteConversation,
@@ -252,10 +308,12 @@ export function ChatProvider({ children }) {
       messages,
       recentConversations,
       sending,
+      fixing,
       error,
       createConversation,
       openConversation,
       sendMessage,
+      fixContinue,
       cancelSend,
       loadRecentConversations,
       deleteConversation,

@@ -1,7 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Xử lý tệp đính kèm với multer. Truyền mô tả ảnh cho BOSS.
-// Lịch sử chat chỉ hiện hội thoại không thuộc dự án.
+// Hỗ trợ resume: nút "Sửa tiếp" → tiếp tục từ code mới nhất.
 
 import express from "express";
 import multer from "multer";
@@ -19,6 +18,11 @@ import {
   saveAttachment,
   listByMessage as listAttachmentsByMessage,
 } from "../db/attachments.js";
+import {
+  getLatestAny as getLatestCodeArtifact,
+  saveArtifact,
+} from "../db/codeArtifacts.js";
+import { loadWorkState } from "../state/luu-trang-thai.js";
 
 import { nhanYeuCau as gwNhanYeuCau } from "../gateway/nhan-yeu-cau.js";
 import { chuyenYeuCauChoBoss } from "../gateway/chuyen-yeu-cau-cho-boss.js";
@@ -91,7 +95,7 @@ async function attachFilesToMessage(msg) {
 }
 
 // ============================================================
-// PIPELINE BOSS
+// PIPELINE BOSS — LẦN ĐẦU
 // ============================================================
 
 async function runBossPipeline({
@@ -208,7 +212,8 @@ async function runBossPipeline({
     signal,
   });
 
-  if (!linh.ok) return { ok: false, error: linh.error || "Lính không hoàn thành" };
+  if (!linh.ok)
+    return { ok: false, error: linh.error || "Lính không hoàn thành" };
 
   const received = await nhanKetQuaLinh({
     userId,
@@ -225,39 +230,72 @@ async function runBossPipeline({
   let finalText = linh.text || received.merged || "";
   let sandboxMeta = null;
   let codeMeta = null;
+  let resumeAvailable = false;
 
   if (danhGia.needSandbox) {
     const language = guessLanguage(finalText);
     const initialCode = extractCodeBlock(finalText, language);
 
     if (initialCode) {
-      const loop = await vongLapSua({
-        userId,
-        conversationId,
-        bossSessionId,
-        language,
-        initialCode,
-        goal: userRequest,
-        signal,
-      });
+      const sandboxConfigured = !!process.env.SANDBOX_ENDPOINT;
 
-      sandboxMeta = loop.lastRun
-        ? {
-            status: loop.lastRun.status,
-            runId: loop.lastRun.runId,
-            attempts: loop.attempts,
-          }
-        : null;
+      if (sandboxConfigured) {
+        const loop = await vongLapSua({
+          userId,
+          conversationId,
+          bossSessionId,
+          language,
+          initialCode,
+          goal: userRequest,
+          signal,
+        });
 
-      if (loop.ok) {
-        codeMeta = { language, version: loop.version };
-        finalText = `Đã hoàn thành. Code đã vượt qua kiểm thử Sandbox (v${
-          loop.version || 1
-        }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+        sandboxMeta = loop.lastRun
+          ? {
+              status: loop.lastRun.status,
+              runId: loop.lastRun.runId,
+              attempts: loop.attempts,
+            }
+          : null;
+
+        // Lưu phiên bản code cuối vào codeArtifacts để resume
+        try {
+          const saved = await saveArtifact({
+            userId,
+            conversationId,
+            language,
+            code: loop.finalCode || initialCode,
+            version: (loop.version || 1) + 1,
+          });
+          codeMeta = {
+            language,
+            version: saved.version,
+            artifactId: String(saved._id),
+          };
+        } catch {
+          /* bỏ qua */
+        }
+
+        if (loop.ok) {
+          finalText = `Đã hoàn thành. Code đã vượt qua kiểm thử Sandbox (v${
+            loop.version || 1
+          }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+          resumeAvailable = false;
+        } else {
+          finalText = `Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
+            loop.lastRun?.stderr || "(không rõ)"
+          }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
+          resumeAvailable = true;
+        }
       } else {
-        finalText = `Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
-          loop.lastRun?.stderr || "(không rõ)"
-        }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+        await logInfo(
+          "BOSS: Sandbox chưa cấu hình — bỏ qua kiểm thử",
+          { userId, conversationId }
+        );
+
+        finalText = `Đã tạo code (chưa kiểm thử Sandbox).\n\n\`\`\`${language}\n${initialCode}\n\`\`\``;
+        sandboxMeta = { status: "skipped" };
+        codeMeta = { language, version: 1 };
       }
     }
   }
@@ -272,9 +310,135 @@ async function runBossPipeline({
       web: webContext ? { used: true } : null,
       boss: bossPick.boss,
       soldier: giao.soldier,
+      resumeAvailable,
     },
   };
 }
+
+// ============================================================
+// PIPELINE BOSS — RESUME (SỬA TIẾP)
+// ============================================================
+
+async function runBossResume({
+  userId,
+  conversationId,
+  signal,
+}) {
+  await logInfo("BOSS: BẮT ĐẦU RESUME (Sửa tiếp)", {
+    userId,
+    conversationId,
+  });
+
+  // 1. Đọc workState để biết yêu cầu gốc
+  const workState = await loadWorkState(userId, conversationId);
+  const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
+
+  // 2. Đọc code mới nhất từ codeArtifacts
+  const latest = await getLatestCodeArtifact(conversationId);
+  if (!latest || !latest.code) {
+    await logWarn("BOSS: Resume thất bại — không có code cũ", {
+      userId,
+      conversationId,
+    });
+    return {
+      ok: false,
+      error: "Không tìm thấy code để sửa tiếp. Vui lòng tạo code mới.",
+    };
+  }
+
+  const language = latest.language || "javascript";
+  const currentCode = latest.code;
+
+  await logInfo("BOSS: Resume — đọc code mới nhất", {
+    userId,
+    conversationId,
+    language,
+    version: latest.version,
+    codeLength: currentCode.length,
+  });
+
+  // 3. Chọn BOSS
+  const bossPick = await chonBossTheoYeuCau({ userId });
+  if (!bossPick.ok) return { ok: false, error: bossPick.error };
+
+  const bossSessionId = null;
+
+  // 4. Chạy vòng lặp sửa từ code hiện tại
+  const sandboxConfigured = !!process.env.SANDBOX_ENDPOINT;
+  if (!sandboxConfigured) {
+    return {
+      ok: false,
+      error: "Sandbox chưa cấu hình — không thể sửa tiếp.",
+    };
+  }
+
+  const loop = await vongLapSua({
+    userId,
+    conversationId,
+    bossSessionId,
+    language,
+    initialCode: currentCode,
+    goal,
+    signal,
+  });
+
+  // 5. Lưu phiên bản cuối
+  let codeMeta = null;
+  try {
+    const saved = await saveArtifact({
+      userId,
+      conversationId,
+      language,
+      code: loop.finalCode || currentCode,
+      version: (latest.version || 1) + 1,
+    });
+    codeMeta = {
+      language,
+      version: saved.version,
+      artifactId: String(saved._id),
+    };
+  } catch {
+    /* bỏ qua */
+  }
+
+  const sandboxMeta = loop.lastRun
+    ? {
+        status: loop.lastRun.status,
+        runId: loop.lastRun.runId,
+        attempts: loop.attempts,
+      }
+    : null;
+
+  let finalText;
+  let resumeAvailable = false;
+
+  if (loop.ok) {
+    finalText = `✅ Sửa tiếp thành công! Code đã vượt qua kiểm thử Sandbox (v${
+      codeMeta?.version || "?"
+    }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+  } else {
+    finalText = `⚠ Vẫn còn lỗi sau ${loop.attempts} lần sửa tiếp.\n\nLỗi cuối:\n${
+      loop.lastRun?.stderr || "(không rõ)"
+    }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục.`;
+    resumeAvailable = true;
+  }
+
+  return {
+    ok: true,
+    text: finalText,
+    meta: {
+      sandbox: sandboxMeta,
+      code: codeMeta,
+      boss: bossPick.boss,
+      resume: true,
+      resumeAvailable,
+    },
+  };
+}
+
+// ============================================================
+// XÂY MESSAGES
+// ============================================================
 
 function buildBossPlanMessages({ userRequest, analysis, webContext }) {
   const lines = [
@@ -296,19 +460,15 @@ function buildBossPlanMessages({ userRequest, analysis, webContext }) {
 
   lines.push(
     "",
-    "Trả về kế hoạch ngắn gọn (không cần code), tập trung vào:",
-    "1. Mục tiêu cụ thể",
-    "2. Loại nhiệm vụ giao lính (code/fix/analysis/summary/research/bulk)",
-    "3. Ràng buộc quan trọng"
+    "Trả về kế hoạch ngắn gọn (không cần code).",
+    "Khi trình bày công thức toán: dùng chữ thường. KHÔNG dùng $$ hoặc LaTeX."
   );
 
   return [
     {
       role: "system",
       content:
-        "Bạn là BOSS — điều phối, không tự viết code dài. " +
-        "Khi trả về công thức toán, dùng ký hiệu chữ thường " +
-        "(ví dụ: 50 * a = 500, a = 10). KHÔNG dùng dấu $$ hay LaTeX.",
+        "Bạn là BOSS — điều phối, không tự viết code dài. Không dùng LaTeX hay $$.",
     },
     { role: "user", content: lines.join("\n") },
   ];
@@ -344,16 +504,14 @@ function buildSoldierMessages({ userRequest, format, webContext }) {
     "",
     "Hãy trả về kết quả đầy đủ. Nếu là code, đặt trong ```<lang>...```.",
     "",
-    "Khi trình bày công thức toán: dùng chữ thường (ví dụ: 50 * a = 500, a = 10).",
-    "KHÔNG dùng dấu $$ hoặc LaTeX."
+    "Khi trình bày công thức toán: dùng chữ thường. KHÔNG dùng $$ hoặc LaTeX."
   );
 
   return [
     {
       role: "system",
       content:
-        "Bạn là lính. Trả về kết quả trực tiếp cho BOSS. " +
-        "Không dùng LaTeX hay dấu $$.",
+        "Bạn là lính. Trả về kết quả trực tiếp cho BOSS. Không dùng LaTeX hay $$.",
     },
     { role: "user", content: lines.join("\n") },
   ];
@@ -412,18 +570,6 @@ router.post(
       const userId = getUserId(req);
       const files = Array.isArray(req.files) ? req.files : [];
 
-      await logInfo("Nhận /chat/send", {
-        userId,
-        hasUserHeader: !!userId,
-        bodyKeys: Object.keys(req.body || {}),
-        filesCount: files.length,
-        fileNames: files.map((f) => ({
-          name: f.originalname,
-          size: f.size,
-          mime: f.mimetype,
-        })),
-      });
-
       if (!userId) {
         return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
       }
@@ -445,7 +591,6 @@ router.post(
         text = "[Ảnh đính kèm]";
       }
 
-      // 1. Nhận yêu cầu
       const recv = await gwNhanYeuCau({
         userId,
         conversationId,
@@ -453,11 +598,9 @@ router.post(
         attachments: [],
       });
       if (!recv.ok) {
-        await logWarn("gwNhanYeuCau thất bại", { error: recv.error });
         return res.status(400).json({ ok: false, message: recv.error });
       }
 
-      // 1b. Lưu tệp đính kèm
       const savedAttachments = [];
       if (files.length > 0 && recv.userMessage?._id) {
         for (const f of files) {
@@ -491,15 +634,6 @@ router.post(
               url: "",
               dataUrl: att.dataUrl || "",
             });
-
-            await logInfo("Đã lưu tệp đính kèm", {
-              userId,
-              name: f.originalname,
-              isImage,
-              tooBig,
-              size: f.size,
-              dataUrlLength: dataUrl.length,
-            });
           } catch (e) {
             await logWarn("Không lưu được tệp đính kèm", {
               name: f?.originalname,
@@ -509,7 +643,6 @@ router.post(
         }
       }
 
-      // 2. Chuyển cho BOSS — KÈM mô tả tệp
       let bossUserRequest = String(text || "");
       if (savedAttachments.length > 0) {
         const attachDesc = savedAttachments
@@ -528,7 +661,6 @@ router.post(
         runBoss: runBossPipeline,
       });
 
-      // 3. Nhận kết quả
       const received = await nhanKetQuaTuBoss({
         userId,
         conversationId,
@@ -538,7 +670,6 @@ router.post(
         return res.status(500).json({ ok: false, message: received.error });
       }
 
-      // 4. Trả cho User
       const delivered = await traKetQuaChoUser({
         userId,
         conversationId,
@@ -567,6 +698,82 @@ router.post(
     }
   }
 );
+
+// ============================================================
+// ROUTE — SỬA TIẾP (RESUME)
+// ============================================================
+
+router.post("/fix-continue", async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+
+    const conversationId = req.body?.conversationId;
+    if (!conversationId) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Thiếu conversationId" });
+    }
+
+    await logInfo("Rồng Thần: nhận yêu cầu SỬA TIẾP", {
+      userId,
+      conversationId,
+    });
+
+    // Lưu tin nhắn user "[Sửa tiếp]" để có lịch sử
+    try {
+      await gwNhanYeuCau({
+        userId,
+        conversationId,
+        text: "🔧 Sửa tiếp",
+        attachments: [],
+      });
+    } catch {
+      /* bỏ qua */
+    }
+
+    const bossResult = await chuyenYeuCauChoBoss({
+      userId,
+      conversationId,
+      userRequest: "Sửa tiếp code hiện tại cho tới khi hết lỗi",
+      userLabel: null,
+      runBoss: runBossResume,
+    });
+
+    const received = await nhanKetQuaTuBoss({
+      userId,
+      conversationId,
+      bossResult,
+    });
+    if (!received.ok) {
+      return res.status(500).json({ ok: false, message: received.error });
+    }
+
+    const delivered = await traKetQuaChoUser({
+      userId,
+      conversationId,
+      text: received.text,
+      meta: received.meta,
+    });
+    if (!delivered.ok) {
+      return res.status(500).json({ ok: false, message: delivered.error });
+    }
+
+    return res.json({
+      ok: true,
+      aiMessage: {
+        ...delivered.aiMessage,
+        id: String(delivered.aiMessage._id),
+      },
+    });
+  } catch (err) {
+    await logWarn("Lỗi /chat/fix-continue", {
+      error: err?.message || String(err),
+    });
+    return res.status(500).json({ ok: false, message: "Lỗi server" });
+  }
+});
 
 // ============================================================
 // ROUTE — TẠO HỘI THOẠI
@@ -618,7 +825,7 @@ router.get("/conversations/:conversationId/messages", async (req, res) => {
 });
 
 // ============================================================
-// ROUTE — LỊCH SỬ (tất cả hội thoại KHÔNG thuộc dự án)
+// ROUTE — LỊCH SỬ
 // ============================================================
 
 router.get("/conversations/recent", async (req, res) => {
@@ -627,7 +834,6 @@ router.get("/conversations/recent", async (req, res) => {
     if (!userId)
       return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
-    // Không truyền limit → lấy tất cả
     const items = await listRecentConversations(userId, {});
     return res.json({ ok: true, items });
   } catch (err) {
@@ -636,8 +842,7 @@ router.get("/conversations/recent", async (req, res) => {
 });
 
 // ============================================================
-// ROUTE — XÓA TẤT CẢ HỘI THOẠI (không thuộc dự án)
-// QUAN TRỌNG: đặt TRƯỚC route /:conversationId
+// ROUTE — XÓA TẤT CẢ
 // ============================================================
 
 router.delete("/conversations/all", async (req, res) => {

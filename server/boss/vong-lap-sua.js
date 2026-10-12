@@ -1,5 +1,8 @@
 // server/boss/vong-lap-sua.js
-// Nhiệm vụ: Vòng lặp sửa code cho tới khi Sandbox ĐÚNG mới thôi.
+// Nhiệm vụ: Vòng lặp sửa code cho tới khi Sandbox ĐÚNG.
+//
+// Hỗ trợ resume: khi user bấm "Sửa tiếp", vòng lặp bắt đầu
+// từ code mới nhất trong DB — không làm lại từ đầu.
 
 import { LIMITS } from "../config/limits.js";
 import { chonLinhTheoNhiemVu } from "../tieu-nao/chon-linh-theo-nhiem-vu.js";
@@ -9,6 +12,18 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 import { kiemTraSandbox } from "./kiem-tra-sandbox.js";
 import { vietFormatSua } from "./viet-format-sua.js";
 
+/**
+ * @param {object} p
+ * @param {string} p.userId
+ * @param {string} p.conversationId
+ * @param {string} p.bossSessionId
+ * @param {string} p.language
+ * @param {string} p.initialCode       — code bắt đầu vòng lặp
+ * @param {string} [p.testCode]
+ * @param {string} [p.goal]            — mục tiêu gốc (yêu cầu user)
+ * @param {number} [p.maxAttempts]     — số vòng tối đa (mặc định lấy LIMITS)
+ * @param {AbortSignal} [p.signal]
+ */
 export async function vongLapSua({
   userId,
   conversationId,
@@ -17,23 +32,28 @@ export async function vongLapSua({
   initialCode,
   testCode = "",
   goal = "",
+  maxAttempts = null,
   signal,
 }) {
   let code = initialCode;
   let attempts = 0;
   let lastRun = null;
 
+  const maxIter = Number.isFinite(maxAttempts)
+    ? maxAttempts
+    : LIMITS.SANDBOX_MAX_FIX_ITERATIONS;
+
   await logInfo("BOSS: bắt đầu vòng lặp sửa code", {
     userId,
     conversationId,
     language,
-    maxAttempts: LIMITS.SANDBOX_MAX_FIX_ITERATIONS,
+    maxAttempts: maxIter,
   });
 
-  while (attempts < LIMITS.SANDBOX_MAX_FIX_ITERATIONS) {
+  while (attempts < maxIter) {
     attempts += 1;
 
-    await logInfo(`BOSS: vòng lặp sửa — lần thử ${attempts}`, {
+    await logInfo(`BOSS: vòng lặp sửa — lần thử ${attempts}/${maxIter}`, {
       userId,
       conversationId,
     });
@@ -61,11 +81,12 @@ export async function vongLapSua({
         version: check.version,
         attempts,
         lastRun: check,
+        exhausted: false,
       };
     }
 
-    if (attempts >= LIMITS.SANDBOX_MAX_FIX_ITERATIONS) {
-      await logWarn("BOSS: vòng lặp sửa — hết lượt", {
+    if (attempts >= maxIter) {
+      await logWarn("BOSS: vòng lặp sửa — hết lượt (cần sửa tiếp)", {
         userId,
         conversationId,
         attempts,
@@ -76,7 +97,8 @@ export async function vongLapSua({
         version: check.version,
         attempts,
         lastRun: check,
-        error: "Đã hết số lần sửa tối đa mà vẫn chưa đúng",
+        exhausted: true,
+        error: `Đã hết ${maxIter} lần sửa trong lượt này — cần bấm "Sửa tiếp".`,
       };
     }
 
@@ -91,14 +113,12 @@ export async function vongLapSua({
       language,
     });
     if (!fixFormat.ok) {
-      await logWarn("BOSS: không viết được format sửa", {
-        error: fixFormat.error,
-      });
       return {
         ok: false,
         finalCode: code,
         attempts,
         lastRun: check,
+        exhausted: false,
         error: fixFormat.error || "Không viết được format sửa",
       };
     }
@@ -113,6 +133,7 @@ export async function vongLapSua({
         finalCode: code,
         attempts,
         lastRun: check,
+        exhausted: false,
         error: pick.error || "Không chọn được lính sửa",
       };
     }
@@ -144,7 +165,7 @@ export async function vongLapSua({
     });
 
     if (!fixed.ok || !fixed.text) {
-      await logWarn("BOSS: lính sửa thất bại", {
+      await logWarn("BOSS: lính sửa thất bại — thử lại", {
         attempt: attempts,
         error: fixed.error,
       });
@@ -159,6 +180,7 @@ export async function vongLapSua({
     finalCode: code,
     attempts,
     lastRun,
+    exhausted: true,
     error: "Vòng lặp sửa vượt quá giới hạn",
   };
 }
@@ -171,7 +193,9 @@ function buildFixMessages(format) {
     format.goal,
     "",
     "Ngôn ngữ:",
-    String(format.constraints?.find((c) => c.startsWith("Ngôn ngữ")) || "javascript"),
+    String(
+      format.constraints?.find((c) => c.startsWith("Ngôn ngữ")) || "javascript"
+    ),
     "",
     "Code hiện tại:",
     "```",

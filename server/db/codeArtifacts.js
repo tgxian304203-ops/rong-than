@@ -46,6 +46,16 @@ export async function getLatest(conversationId, language) {
   );
 }
 
+/**
+ * Lấy code mới nhất của hội thoại — bất kể ngôn ngữ nào.
+ */
+export async function getLatestAny(conversationId) {
+  return col().findOne(
+    { conversationId: String(conversationId) },
+    { sort: { version: -1 } }
+  );
+}
+
 export async function getNextVersion(conversationId, language) {
   const latest = await getLatest(conversationId, language);
   return latest ? latest.version + 1 : 1;

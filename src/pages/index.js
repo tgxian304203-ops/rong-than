@@ -1,13 +1,8 @@
 // src/pages/index.js
 // Nhiệm vụ: Màn hình chat chính.
-// Quy tắc dự án (PHẦN 04, mục 2):
-//   - Nút ☰ bên trái mở menu
-//   - Logo 🌕🐉 nằm CHÍNH GIỮA phía trên
-//   - Nút ⋮ bên phải mở Rồng Thần Logs
-//   - Tin nhắn AI căn trái, User căn phải
-//   - Thanh nhập ở dưới cùng: ＋ | ô nhập | ➤
+// Thêm nút "🔧 Sửa tiếp" khi AI trả về code cần sửa tiếp.
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
 import MessageList from "../components/MessageList.js";
 import InputBar from "../components/InputBar.js";
@@ -18,25 +13,38 @@ export default function ChatMain() {
   const {
     messages,
     sending,
+    fixing,
     activeConversationId,
-    createConversation,
     sendMessage,
-    reset,
+    fixContinue,
   } = useChat();
   const { showToast } = useUI();
 
-  // Đảm bảo có 1 hội thoại khi mở chat chính mà chưa có
+  // Kiểm tra xem tin AI cuối có cần "Sửa tiếp" không
+  const [showFixButton, setShowFixButton] = useState(false);
+
   useEffect(() => {
-    if (!activeConversationId) {
-      // Không tự tạo ngay — để khi User gửi tin đầu tiên mới tạo.
-      // Điều này tránh tạo hội thoại rỗng khi chỉ mở màn.
+    const lastAI = [...messages].reverse().find((m) => m.role === "ai");
+    if (!lastAI) {
+      setShowFixButton(false);
+      return;
     }
-  }, [activeConversationId]);
+    // Cần nút Fix khi tin AI có meta.resumeAvailable = true
+    const meta = lastAI.meta || null;
+    setShowFixButton(!!meta?.resumeAvailable);
+  }, [messages]);
 
   const handleSend = async (payload) => {
     const result = await sendMessage(payload);
     if (!result?.ok) {
       showToast(result?.error || "Gửi tin nhắn thất bại", "error", 4000);
+    }
+  };
+
+  const handleFixContinue = async () => {
+    const res = await fixContinue();
+    if (!res?.ok) {
+      showToast(res?.error || "Sửa tiếp thất bại", "error", 4000);
     }
   };
 
@@ -50,14 +58,49 @@ export default function ChatMain() {
         overflow: "hidden",
       }}
     >
-      {/* HEADER — variant main: ☰ | 🌕🐉 | ⋮ */}
       <HeaderBar variant="main" />
 
-      {/* VÙNG TRÒ CHUYỆN */}
       <MessageList messages={messages} />
 
-      {/* THANH NHẬP */}
-      <InputBar onSend={handleSend} sending={sending} />
+      {/* Nút "Sửa tiếp" */}
+      {showFixButton ? (
+        <div
+          style={{
+            padding: "0 var(--space-3) var(--space-2)",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleFixContinue}
+            disabled={fixing || sending}
+            className="no-select"
+            style={{
+              minHeight: 44,
+              padding: "0 var(--space-4)",
+              borderRadius: "var(--radius-md)",
+              backgroundColor: fixing
+                ? "rgba(249, 115, 22, 0.3)"
+                : "rgba(249, 115, 22, 0.9)",
+              color: "#fff",
+              fontSize: "var(--font-base)",
+              fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+            }}
+          >
+            {fixing ? "⏳ Đang sửa tiếp…" : "🔧 Sửa tiếp"}
+          </button>
+        </div>
+      ) : null}
+
+      <InputBar
+        onSend={handleSend}
+        sending={sending || fixing}
+        disabled={fixing}
+      />
     </div>
   );
 }
