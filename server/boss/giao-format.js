@@ -1,5 +1,6 @@
 // server/boss/giao-format.js
 // Nhiệm vụ: Giao format cho Tiểu Não xử lý.
+// Trả về danh sách lính ứng viên để goi-linh thử lần lượt.
 
 import { nhanFormat } from "../tieu-nao/nhan-format.js";
 import { docNhiemVu } from "../tieu-nao/doc-nhiem-vu.js";
@@ -56,12 +57,14 @@ export async function giaoFormat({
     taskType: doc.taskType,
     soldier: pick.soldier.name,
     soldierProvider: pick.soldier.provider,
+    totalCandidates: (pick.candidates || []).length,
   });
 
   return {
     ok: true,
     taskId: String(task._id),
     soldier: pick.soldier,
+    candidates: pick.candidates || [pick.soldier],  // ← DANH SÁCH để goi-linh thử
     taskType: doc.taskType,
   };
 }

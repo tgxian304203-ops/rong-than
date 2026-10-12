@@ -52,25 +52,22 @@ button:disabled {
   opacity: 0.5;
 }
 
-/* Link không gạch chân mặc định */
 a {
   color: inherit;
   text-decoration: none;
 }
 
-/* Danh sách không dấu đầu dòng */
 ul,
 ol {
   list-style: none;
 }
 
-/* Ảnh không tràn */
 img {
   max-width: 100%;
   display: block;
 }
 
-/* Cuộn mượt, ẩn thanh cuộn trên mobile nhưng vẫn cuộn được */
+/* Cuộn mượt */
 .scroll-y {
   overflow-y: auto;
   overflow-x: hidden;
@@ -125,4 +122,22 @@ input,
 textarea,
 button {
   touch-action: manipulation;
+}
+
+/* ============================================================
+   KHOẢNG CÁCH 1mm GIỮA THANH NHẬP VÀ BÀN PHÍM
+   ============================================================
+   Theo PHẦN 04, mục 2.G: thanh nhập cách bàn phím 1mm.
+   1mm ≈ 3.78px → dùng 4px cho an toàn.
+   ============================================================ */
+
+.inputbar-keyboard-gap {
+  /* Khi bàn phím mở, có khoảng trống 4px (~1mm) phía dưới */
+  padding-bottom: calc(4px + env(safe-area-inset-bottom, 0));
+  transition: padding-bottom 0.2s ease-out;
+}
+
+/* Trường hợp KHÔNG có bàn phím — padding bình thường */
+.inputbar-no-keyboard {
+  padding-bottom: env(safe-area-inset-bottom, 0);
 }

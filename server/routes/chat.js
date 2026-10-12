@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// BOSS tự kiểm tra Sandbox qua Piston. Nút "Sửa tiếp" để resume.
+// Truyền danh sách BOSS/lính ứng viên để thử lần lượt khi hết quota/lỗi.
 
 import express from "express";
 import multer from "multer";
@@ -132,6 +132,7 @@ async function runBossPipeline({
     if (web.ok) webContext = formatWebResults(web.results);
   }
 
+  // Chọn BOSS — trả về cả candidates
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
@@ -141,10 +142,12 @@ async function runBossPipeline({
     webContext,
   });
 
+  // Gọi BOSS — truyền candidates để thử lần lượt
   let bossRes = await goiBoss({
     userId,
     conversationId,
     boss: bossPick.boss,
+    candidates: bossPick.candidates,
     messages: bossMessages,
     temperature: 0.4,
     maxTokens: 4096,
@@ -152,7 +155,7 @@ async function runBossPipeline({
   });
 
   if (!bossRes.ok) {
-    await logWarn("BOSS cũ lỗi, gọi BOSS mới", {
+    await logWarn("BOSS chính thất bại — gọi BOSS mới", {
       userId,
       conversationId,
       error: bossRes.error,
@@ -187,6 +190,7 @@ async function runBossPipeline({
   });
   if (!formatRes.ok) return { ok: false, error: formatRes.error };
 
+  // Giao format — trả về candidates lính
   const giao = await giaoFormat({
     userId,
     conversationId,
@@ -201,10 +205,12 @@ async function runBossPipeline({
     webContext,
   });
 
+  // Gọi lính — truyền candidates để thử lần lượt
   const linh = await goiLinh({
     userId,
     taskId: giao.taskId,
     soldier: giao.soldier,
+    candidates: giao.candidates,
     messages: soldierMessages,
     payload: formatRes.format,
     temperature: 0.3,
@@ -237,7 +243,6 @@ async function runBossPipeline({
     const initialCode = extractCodeBlock(finalText, language);
 
     if (initialCode) {
-      // Piston luôn có — không cần kiểm tra SANDBOX_ENDPOINT
       const loop = await vongLapSua({
         userId,
         conversationId,
@@ -256,7 +261,6 @@ async function runBossPipeline({
           }
         : null;
 
-      // Lưu phiên bản code cuối cùng để resume
       try {
         const saved = await saveArtifact({
           userId,
@@ -296,8 +300,8 @@ async function runBossPipeline({
       sandbox: sandboxMeta,
       code: codeMeta,
       web: webContext ? { used: true } : null,
-      boss: bossPick.boss,
-      soldier: giao.soldier,
+      boss: bossRes.boss || bossPick.boss,
+      soldier: linh.soldier || giao.soldier,
       resumeAvailable,
     },
   };
@@ -313,11 +317,9 @@ async function runBossResume({ userId, conversationId, signal }) {
     conversationId,
   });
 
-  // 1. Đọc workState để biết yêu cầu gốc
   const workState = await loadWorkState(userId, conversationId);
   const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
 
-  // 2. Đọc code mới nhất
   const latest = await getLatestCodeArtifact(conversationId);
   if (!latest || !latest.code) {
     await logWarn("BOSS: Resume thất bại — không có code cũ", {
@@ -341,13 +343,11 @@ async function runBossResume({ userId, conversationId, signal }) {
     codeLength: currentCode.length,
   });
 
-  // 3. Chọn BOSS
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
   const bossSessionId = null;
 
-  // 4. Chạy vòng lặp sửa từ code hiện tại
   const loop = await vongLapSua({
     userId,
     conversationId,
@@ -358,7 +358,6 @@ async function runBossResume({ userId, conversationId, signal }) {
     signal,
   });
 
-  // 5. Lưu phiên bản cuối
   let codeMeta = null;
   try {
     const saved = await saveArtifact({
@@ -697,7 +696,6 @@ router.post("/fix-continue", async (req, res) => {
       conversationId,
     });
 
-    // Lưu tin nhắn user "[Sửa tiếp]"
     try {
       await gwNhanYeuCau({
         userId,

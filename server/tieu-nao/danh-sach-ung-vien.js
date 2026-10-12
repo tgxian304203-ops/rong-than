@@ -1,13 +1,14 @@
 // server/tieu-nao/danh-sach-ung-vien.js
 // Nhiệm vụ: Danh sách model ứng viên của Tiểu Não.
-// Khớp với bảng trong PHẦN 06:
-//   | Viết code              | qwen/qwen3-coder:free | openai/gpt-oss-120b      | OpenRouter / Groq |
-//   | Sửa lỗi code           | qwen/qwen3-coder:free | meta-llama/llama-4-maverick-17b-128e-instruct | OpenRouter / Groq |
-//   | Phân tích code         | openai/gpt-oss-120b   | meta-llama/llama-4-maverick-17b-128e-instruct | Groq |
-//   | Đọc tài liệu dài       | qwen/qwen3.6-plus:free | moonshotai/kimi-k2-instruct | OpenRouter / Groq |
-//   | Tóm tắt                | llama-3.3-70b-versatile | minimax/minimax-m2.5:free | Groq / OpenRouter |
-//   | Tra cứu thông tin      | meta-llama/llama-4-scout-17b-16e-instruct | minimax/minimax-m2.5:free | Groq / OpenRouter |
-//   | Tác vụ khối lượng lớn  | gemini-3.5-flash-lite | llama-3.1-8b-instant      | Gemini / Groq |
+// Hỗ trợ dò model động từ provider qua API /models khi bảng tĩnh hết.
+
+import groq from "../providers/groq.js";
+import gemini from "../providers/gemini.js";
+import openrouter from "../providers/openrouter.js";
+import { listKeysByProvider } from "../db/tieuNaoKeys.js";
+import { logInfo, logWarn } from "../logs/ghi-log.js";
+
+const MODULES = { groq, gemini, openrouter };
 
 // ============================================================
 // LOẠI NHIỆM VỤ
@@ -24,7 +25,7 @@ export const TIEU_NAO_TASK = {
 };
 
 // ============================================================
-// BẢNG ỨNG VIÊN THEO NHIỆM VỤ
+// BẢNG ỨNG VIÊN TĨNH
 // ============================================================
 
 export const TIEU_NAO_CANDIDATES = {
@@ -70,10 +71,6 @@ export const TIEU_NAO_CANDIDATES = {
   ],
 };
 
-// ============================================================
-// LẤY
-// ============================================================
-
 export function layDanhSachUngVien(taskType) {
   return TIEU_NAO_CANDIDATES[taskType] || [];
 }
@@ -82,9 +79,93 @@ export function layTatCaUngVien() {
   return { ...TIEU_NAO_CANDIDATES };
 }
 
+// ============================================================
+// DÒ MODEL ĐỘNG TỪ PROVIDER
+// ============================================================
+
+/**
+ * Dò model động từ 1 provider (dùng key Tiểu Não).
+ */
+export async function doModelDongTuProvider({ userId, provider }) {
+  const mod = MODULES[provider];
+  if (!mod) {
+    return {
+      ok: false,
+      models: [],
+      error: `Provider không hỗ trợ: ${provider}`,
+    };
+  }
+
+  const keys = await listKeysByProvider(userId, provider);
+  const usableKeys = keys.filter((k) => k.quota !== "out");
+
+  if (usableKeys.length === 0) {
+    return {
+      ok: false,
+      models: [],
+      error: `Provider ${provider} không có key còn quota`,
+    };
+  }
+
+  const key = usableKeys[0];
+
+  try {
+    const res = await mod.verifyKey(key.rawKey);
+    if (!res.ok) {
+      return {
+        ok: false,
+        models: [],
+        error: res.error || `Dò model từ ${provider} thất bại`,
+      };
+    }
+
+    const models = Array.isArray(res.models) ? res.models.filter(Boolean) : [];
+
+    await logInfo("Tiểu Não: dò model động thành công", {
+      userId,
+      provider,
+      count: models.length,
+    });
+
+    return { ok: true, models };
+  } catch (err) {
+    await logWarn("Tiểu Não: dò model động lỗi", {
+      userId,
+      provider,
+      error: err?.message || String(err),
+    });
+    return {
+      ok: false,
+      models: [],
+      error: err?.message || "Lỗi không xác định",
+    };
+  }
+}
+
+/**
+ * Dò model động từ TẤT CẢ provider.
+ */
+export async function doTatCaModelDong({ userId }) {
+  const allProviders = Object.keys(MODULES);
+  const result = [];
+
+  for (const provider of allProviders) {
+    const res = await doModelDongTuProvider({ userId, provider });
+    if (res.ok) {
+      for (const name of res.models) {
+        result.push({ name, provider });
+      }
+    }
+  }
+
+  return result;
+}
+
 export default {
   TIEU_NAO_TASK,
   TIEU_NAO_CANDIDATES,
   layDanhSachUngVien,
   layTatCaUngVien,
+  doModelDongTuProvider,
+  doTatCaModelDong,
 };

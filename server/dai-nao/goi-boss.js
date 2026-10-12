@@ -1,11 +1,16 @@
 // server/dai-nao/goi-boss.js
-// Nhiệm vụ: Gọi model lên làm BOSS.
+// Nhiệm vụ: Gọi BOSS.
+// Thử lần lượt các BOSS ứng viên — không dừng ở BOSS chính.
 
 import { listKeysByProvider, updateQuota } from "../db/daiNaoKeys.js";
 import { createSession } from "../db/bossSessions.js";
 import { LIMITS } from "../config/limits.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
-import { baoCaoConDung, baoCaoHetQuota, baoCaoLoi } from "./kiem-tra-kha-dung.js";
+import {
+  baoCaoConDung,
+  baoCaoHetQuota,
+  baoCaoLoi,
+} from "./kiem-tra-kha-dung.js";
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
 import openrouter from "../providers/openrouter.js";
@@ -13,13 +18,26 @@ import openrouter from "../providers/openrouter.js";
 const MODULES = { groq, gemini, openrouter };
 
 // ============================================================
-// GỌI BOSS
+// GỌI BOSS — THỬ LẦN LƯỢT
 // ============================================================
 
+/**
+ * @param {object} p
+ * @param {string} p.userId
+ * @param {string} p.conversationId
+ * @param {object} p.boss           — BOSS chính (ưu tiên 1)
+ * @param {Array} [p.candidates]    — TOÀN BỘ danh sách ứng viên (để fallback)
+ * @param {Array} p.messages
+ * @param {number} [p.temperature]
+ * @param {number} [p.maxTokens]
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<{ok: boolean, text?: string, usage?: object, session?: object, boss?: object, keyId?: string, error?: string}>}
+ */
 export async function goiBoss({
   userId,
   conversationId,
   boss,
+  candidates = null,
   messages,
   temperature = 0.7,
   maxTokens = 4096,
@@ -29,118 +47,173 @@ export async function goiBoss({
     return { ok: false, error: "Thiếu thông tin BOSS" };
   }
 
-  const mod = MODULES[boss.provider];
-  if (!mod) {
-    return { ok: false, error: `Chưa hỗ trợ provider ${boss.provider}` };
-  }
+  // Danh sách để thử lần lượt: BOSS chính + dự phòng
+  const tryList = Array.isArray(candidates) && candidates.length > 0
+    ? candidates
+    : [boss];
 
-  await logInfo("BOSS: bắt đầu gọi", {
+  await logInfo(`Đại Não: bắt đầu thử ${tryList.length} BOSS`, {
     userId,
     conversationId,
-    boss: boss.name,
-    provider: boss.provider,
+    firstBoss: tryList[0]?.name,
   });
 
-  const keys = await listKeysByProvider(userId, boss.provider);
-  if (!keys || keys.length === 0) {
-    await logWarn("BOSS: không có key nào", {
-      userId,
-      provider: boss.provider,
-    });
-    return { ok: false, error: `Không có key nào cho ${boss.provider}` };
-  }
+  // ============================================================
+  // DUYỆT TỪNG BOSS
+  // ============================================================
+  for (let bossIdx = 0; bossIdx < tryList.length; bossIdx++) {
+    const currentBoss = tryList[bossIdx];
 
-  const errors = [];
-
-  for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
-    let anyAvailable = false;
-
-    for (const key of keys) {
-      if (key.quota === "out") continue;
-      anyAvailable = true;
-
-      try {
-        const res = await mod.chat({
-          rawKey: key.rawKey,
-          model: boss.name,
-          messages,
-          temperature,
-          maxTokens,
-          signal,
-        });
-
-        if (res.ok) {
-          await baoCaoConDung(boss.name, boss.provider);
-
-          const session = await createSession({
-            userId,
-            conversationId,
-            modelName: boss.name,
-            provider: boss.provider,
-            keyId: String(key._id),
-          });
-
-          await logInfo("BOSS: gọi thành công", {
-            userId,
-            conversationId,
-            boss: boss.name,
-            provider: boss.provider,
-            keyId: String(key._id),
-          });
-
-          return {
-            ok: true,
-            text: res.text,
-            usage: res.usage,
-            session,
-            keyId: String(key._id),
-          };
-        }
-      } catch (err) {
-        const msg = String(err?.message || "").toLowerCase();
-
-        if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
-          await updateQuota(key._id, "out");
-          await baoCaoHetQuota(boss.name, boss.provider);
-          await logWarn("BOSS: key hết quota, xoay key", {
-            userId,
-            keyId: String(key._id),
-            boss: boss.name,
-          });
-          continue;
-        }
-
-        if (msg.includes("invalid") || msg.includes("401") || msg.includes("403")) {
-          await updateQuota(key._id, "out");
-          await logWarn("BOSS: key không hợp lệ, xoay key", {
-            userId,
-            keyId: String(key._id),
-          });
-          continue;
-        }
-
-        await baoCaoLoi(boss.name, boss.provider, err?.message || "Lỗi");
-        errors.push(err?.message || "Lỗi không rõ");
-        await logWarn("BOSS: gọi lỗi", {
-          userId,
-          boss: boss.name,
-          error: err?.message || String(err),
-        });
-      }
+    const mod = MODULES[currentBoss.provider];
+    if (!mod) {
+      await logWarn(`Đại Não: bỏ qua BOSS (provider không hỗ trợ)`, {
+        boss: currentBoss.name,
+        provider: currentBoss.provider,
+      });
+      continue;
     }
 
-    if (!anyAvailable) break;
+    const keys = await listKeysByProvider(userId, currentBoss.provider);
+    if (!keys || keys.length === 0) {
+      await logInfo(`Đại Não: bỏ qua BOSS (không có key)`, {
+        boss: currentBoss.name,
+        provider: currentBoss.provider,
+      });
+      continue;
+    }
+
+    await logInfo(`Đại Não: thử BOSS #${bossIdx + 1}`, {
+      userId,
+      conversationId,
+      boss: currentBoss.name,
+      provider: currentBoss.provider,
+    });
+
+    // ============================================================
+    // XOAY KEY CHO BOSS NÀY
+    // ============================================================
+    let bossSucceeded = false;
+    let lastError = null;
+    const errors = [];
+
+    for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
+      let anyAvailable = false;
+
+      for (const key of keys) {
+        if (key.quota === "out") continue;
+        anyAvailable = true;
+
+        try {
+          const res = await mod.chat({
+            rawKey: key.rawKey,
+            model: currentBoss.name,
+            messages,
+            temperature,
+            maxTokens,
+            signal,
+          });
+
+          if (res.ok) {
+            await baoCaoConDung(currentBoss.name, currentBoss.provider);
+
+            const session = await createSession({
+              userId,
+              conversationId,
+              modelName: currentBoss.name,
+              provider: currentBoss.provider,
+              keyId: String(key._id),
+            });
+
+            await logInfo(`Đại Não: BOSS THÀNH CÔNG`, {
+              userId,
+              conversationId,
+              boss: currentBoss.name,
+              provider: currentBoss.provider,
+              keyId: String(key._id),
+              position: bossIdx + 1,
+            });
+
+            return {
+              ok: true,
+              text: res.text,
+              usage: res.usage,
+              session,
+              boss: currentBoss,
+              keyId: String(key._id),
+            };
+          }
+
+          lastError = res.error || "Không rõ";
+          errors.push(`${currentBoss.name}: ${lastError}`);
+        } catch (err) {
+          const msg = String(err?.message || "").toLowerCase();
+          lastError = err?.message || "Lỗi không rõ";
+
+          // Hết quota / key sai → đánh dấu key hết, thử key khác
+          if (
+            msg.includes("quota") ||
+            msg.includes("429") ||
+            msg.includes("rate") ||
+            msg.includes("invalid") ||
+            msg.includes("401") ||
+            msg.includes("403")
+          ) {
+            await updateQuota(key._id, "out");
+
+            if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
+              await baoCaoHetQuota(currentBoss.name, currentBoss.provider);
+            }
+
+            await logWarn(`Đại Não: key lỗi, xoay key`, {
+              userId,
+              boss: currentBoss.name,
+              keyId: String(key._id),
+              reason: msg.includes("quota") ? "quota" : "invalid",
+            });
+            continue;
+          }
+
+          // Lỗi khác
+          await baoCaoLoi(currentBoss.name, currentBoss.provider, lastError);
+          errors.push(`${currentBoss.name}: ${lastError}`);
+          await logWarn(`Đại Não: BOSS lỗi`, {
+            userId,
+            boss: currentBoss.name,
+            error: lastError,
+          });
+        }
+      }
+
+      if (!anyAvailable) break;
+    }
+
+    // BOSS này thất bại → thử BOSS tiếp theo
+    if (!bossSucceeded) {
+      await baoCaoLoi(currentBoss.name, currentBoss.provider, "Thất bại hết key");
+      await logWarn(
+        `Đại Não: BOSS #${bossIdx + 1} thất bại — chuyển BOSS tiếp theo`,
+        {
+          userId,
+          boss: currentBoss.name,
+          errors: errors.slice(0, 3),
+        }
+      );
+      continue;
+    }
   }
 
-  await logWarn("BOSS: thất bại sau tất cả nỗ lực", {
+  // ============================================================
+  // HẾT TẤT CẢ BOSS
+  // ============================================================
+  await logWarn("Đại Não: TẤT CẢ BOSS đều thất bại", {
     userId,
-    boss: boss.name,
-    errors: errors.join(" | "),
+    conversationId,
+    totalTried: tryList.length,
   });
 
   return {
     ok: false,
-    error: errors.join(" | ") || "Không gọi được BOSS",
+    error: `Đã thử ${tryList.length} BOSS nhưng tất cả đều thất bại`,
   };
 }
 

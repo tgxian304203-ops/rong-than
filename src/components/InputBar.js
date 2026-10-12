@@ -1,14 +1,11 @@
 // src/components/InputBar.js
 // Nhiệm vụ: Thanh nhập tin nhắn + tệp đính kèm.
-// Quy tắc dự án:
-//   - Trái: ＋ mở AttachMenu
-//   - Giữa: ô nhập tự mở rộng, tối đa 6 dòng, cho phép cuộn nội bộ
-//   - Phải: ➤ gửi
-//   - Enter xuống dòng, KHÔNG gửi
-//   - Chỉ gửi khi nhấn nút ➤
-//   - Khi bàn phím mở, thanh nhập nằm sát trên bàn phím
-//   - Tệp đính kèm nằm phía trên thanh nhập
-//   - Chip tệp có nút × riêng
+//
+// QUY TẮC PHẦN 04, mục 2.G:
+//   - Khi bàn phím mở, thanh nhập cách bàn phím 1mm (~4px).
+//   - Khi bàn phím đóng, thanh nhập về đáy màn hình.
+//
+// Phát hiện bàn phím qua window.visualViewport (Chrome/Safari mobile).
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
@@ -17,17 +14,59 @@ import { isBlankMessage } from "../utils/validate.js";
 
 const MAX_LINES = 6;
 const LINE_HEIGHT = 22;
-const PADDING_Y = 22; // 11 top + 11 bottom
+const PADDING_Y = 22;
 
 export default function InputBar({ onSend, sending = false, disabled = false }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+
+  // ============================================================
+  // PHÁT HIỆN BÀN PHÍM MỞ/ĐÓNG
+  // ============================================================
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const vv = window.visualViewport;
+    if (!vv) {
+      // Fallback: dùng window.innerHeight
+      const onResize = () => {
+        const h = window.innerHeight;
+        const fullH = window.screen.height;
+        setKeyboardOpen(h < fullH * 0.75);
+      };
+      window.addEventListener("resize", onResize);
+      onResize();
+      return () => window.removeEventListener("resize", onResize);
+    }
+
+    let initialHeight = vv.height;
+
+    const onResize = () => {
+      // Nếu viewport giảm > 150px → bàn phím mở
+      const diff = initialHeight - vv.height;
+      setKeyboardOpen(diff > 150);
+    };
+
+    const onScroll = () => {
+      // iOS: khi bàn phím mở, visualViewport.offsetTop > 0
+      setKeyboardOpen(vv.offsetTop > 0 || vv.height < initialHeight - 150);
+    };
+
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onScroll);
+
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onScroll);
+    };
+  }, []);
 
   // ============================================================
   // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
@@ -54,7 +93,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
       attachments: [...attachments],
     };
 
-    // Xóa trạng thái ngay để UI phản hồi tức thì
     setText("");
     setAttachments([]);
     setAttachOpen(false);
@@ -62,13 +100,7 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
     await onSend?.(payload);
   };
 
-  // ============================================================
-  // BÀN PHÍM: Enter = xuống dòng (mặc định textarea)
-  // Không gửi khi Enter.
-  // ============================================================
   const handleKeyDown = (e) => {
-    // Không chặn Enter — để mặc định xuống dòng.
-    // Chỉ chặn Ctrl+Enter hoặc Cmd+Enter để gửi nhanh (tùy chọn).
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
       handleSend();
@@ -97,10 +129,12 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   return (
     <div
-      className="safe-bottom"
+      className={keyboardOpen ? "inputbar-keyboard-gap" : "inputbar-no-keyboard"}
       style={{
         position: "relative",
-        padding: "var(--space-2) var(--space-2)",
+        paddingLeft: "var(--space-2)",
+        paddingRight: "var(--space-2)",
+        paddingTop: "var(--space-2)",
         borderTop: "1px solid var(--color-border)",
         backgroundColor: "rgba(10,10,10,0.6)",
         backdropFilter: "blur(12px)",
