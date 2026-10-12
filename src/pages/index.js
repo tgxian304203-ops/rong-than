@@ -1,8 +1,8 @@
 // src/pages/index.js
 // Nhiệm vụ: Màn hình chat chính.
-// Thêm nút "🔧 Sửa tiếp" khi AI trả về code cần sửa tiếp.
+// Giữ HeaderBar — nhưng HeaderBar không có nền/viền.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
 import MessageList from "../components/MessageList.js";
 import InputBar from "../components/InputBar.js";
@@ -20,7 +20,6 @@ export default function ChatMain() {
   } = useChat();
   const { showToast } = useUI();
 
-  // Kiểm tra xem tin AI cuối có cần "Sửa tiếp" không
   const [showFixButton, setShowFixButton] = useState(false);
 
   useEffect(() => {
@@ -29,7 +28,6 @@ export default function ChatMain() {
       setShowFixButton(false);
       return;
     }
-    // Cần nút Fix khi tin AI có meta.resumeAvailable = true
     const meta = lastAI.meta || null;
     setShowFixButton(!!meta?.resumeAvailable);
   }, [messages]);
@@ -56,13 +54,13 @@ export default function ChatMain() {
         height: "100%",
         width: "100%",
         overflow: "hidden",
+        position: "relative",
       }}
     >
       <HeaderBar variant="main" />
 
       <MessageList messages={messages} />
 
-      {/* Nút "Sửa tiếp" */}
       {showFixButton ? (
         <div
           style={{

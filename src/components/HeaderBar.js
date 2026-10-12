@@ -1,18 +1,6 @@
 // src/components/HeaderBar.js
 // Nhiệm vụ: Thanh trên cùng cho mọi màn hình.
-// Hỗ trợ 2 chế độ:
-//   - variant="main"  → màn hình chat chính
-//       + Trái: ☰ (mở menu)
-//       + Giữa: 🌕🐉 (logo giữa)
-//       + Phải: ⋮ (mở Logs)
-//   - variant="sub"   → màn hình phụ
-//       + Trái: ← Quay lại (hoặc nút tùy chỉnh)
-//       + Giữa: tiêu đề (tùy chọn)
-//       + Phải: 🌕🐉 (logo phải)
-//
-// Quy tắc:
-//   - Không đặt logo dự án lên nút chức năng.
-//   - Nút có vùng chạm đủ lớn cho mobile.
+// KHÔNG có nền/viền — chỉ có nút và logo nổi.
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
@@ -47,10 +35,9 @@ export default function HeaderBar({
         gridTemplateColumns: "56px 1fr 56px",
         alignItems: "center",
         padding: "0 var(--space-2)",
-        backgroundColor: "rgba(10,10,10,0.75)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        borderBottom: "1px solid var(--color-border)",
+        // KHÔNG có backgroundColor, backdropFilter, borderBottom
+        backgroundColor: "transparent",
+        borderBottom: "none",
       }}
     >
       {/* Ô TRÁI */}
@@ -118,7 +105,7 @@ export default function HeaderBar({
 }
 
 // ============================================================
-// Nút icon chuẩn — vùng chạm tối thiểu 44x44 cho mobile
+// Nút icon
 // ============================================================
 function IconButton({ children, label, onClick }) {
   return (

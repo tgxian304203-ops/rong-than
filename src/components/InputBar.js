@@ -1,11 +1,9 @@
 // src/components/InputBar.js
-// Nhiệm vụ: Thanh nhập tin nhắn + tệp đính kèm.
+// Nhiệm vụ: CHỈ hiển thị ô input nổi — không có thanh/viền bao quanh.
 //
-// QUY TẮC PHẦN 04, mục 2.G:
-//   - Thanh nhập cách bàn phím 1mm (~4px).
-//
-// Cách làm: dùng window.visualViewport để phát hiện bàn phím mở.
-// Khi bàn phím mở → đẩy InputBar lên bằng transform translateY.
+// Yêu cầu:
+//   - Không có thanh dưới cùng.
+//   - Chỉ có ô input (nút ＋, textarea, nút ➤) nổi trên nền chat.
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
@@ -16,63 +14,15 @@ const MAX_LINES = 6;
 const LINE_HEIGHT = 22;
 const PADDING_Y = 22;
 
-// 1mm ≈ 3.78px → 4px
-const KEYBOARD_GAP_PX = 4;
-
 export default function InputBar({ onSend, sending = false, disabled = false }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
-  const containerRef = useRef(null);
-
-  // ============================================================
-  // DETECT BÀN PHÍM — QUA visualViewport
-  // ============================================================
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    const update = () => {
-      // Khoảng cách giữa đáy window.innerHeight và đáy visualViewport
-      // = chiều cao bàn phím (khi bàn phím mở).
-      const gap = window.innerHeight - (vv.height + vv.offsetTop);
-      setKeyboardOffset(gap > 0 ? gap : 0);
-    };
-
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    window.addEventListener("resize", update);
-
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
-  // ============================================================
-  // CUỘN TIN NHẮN KHI BÀN PHÍM MỞ
-  // ============================================================
-  useEffect(() => {
-    if (keyboardOffset > 0) {
-      // Đợi React render xong → cuộn xuống cuối
-      setTimeout(() => {
-        const el = document.querySelector(".scroll-y");
-        if (el && typeof el.scrollTop === "number") {
-          el.scrollTop = el.scrollHeight;
-        }
-      }, 100);
-    }
-  }, [keyboardOffset]);
 
   // ============================================================
   // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
@@ -133,32 +83,15 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   const canSend = !isBlankMessage(text, attachments) && !sending && !disabled;
 
-  // ============================================================
-  // TÍNH TOÁN KHOẢNG CÁCH ĐẨY LÊN
-  // ============================================================
-  // Nếu bàn phím mở → đẩy InputBar lên `keyboardOffset + 4px`.
-  // Nếu bàn phím đóng → giữ nguyên ở đáy.
-  const translateY = keyboardOffset > 0
-    ? -(keyboardOffset + KEYBOARD_GAP_PX)
-    : 0;
-
   return (
     <div
-      ref={containerRef}
       style={{
-        position: "relative",
-        // Đẩy InputBar lên khi bàn phím mở
-        transform: `translateY(${translateY}px)`,
-        transition: "transform 0.15s ease-out",
-        paddingBottom: "4px",
-        paddingLeft: "var(--space-2)",
-        paddingRight: "var(--space-2)",
-        paddingTop: "var(--space-2)",
-        borderTop: "1px solid var(--color-border)",
-        backgroundColor: "rgba(10,10,10,0.95)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        zIndex: 20,
+        // KHÔNG có viền, KHÔNG có nền, KHÔNG có thanh bao quanh.
+        // Chỉ có ô input nổi ở giữa.
+        padding: "8px 8px 8px 8px",
+        // Khoảng cách 1mm phía dưới ô input
+        paddingBottom: "calc(4px + env(safe-area-inset-bottom, 0px))",
+        backgroundColor: "transparent",
       }}
     >
       {/* INPUT ẨN */}
@@ -217,7 +150,7 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         </div>
       ) : null}
 
-      {/* THANH NHẬP */}
+      {/* Ô INPUT — CHỈ CÓ Ô NÀY, KHÔNG CÓ THANH BAO QUANH */}
       <div
         className="glass-inputbar"
         style={{
