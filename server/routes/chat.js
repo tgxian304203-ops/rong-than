@@ -7,12 +7,11 @@
 //   - BOSS xử lý → trả kết quả cho Rồng Thần → trả cho User.
 //
 // Hỗ trợ tệp đính kèm: dùng multer (memoryStorage).
-// Pipeline BOSS nằm trong file này (theo đúng sơ đồ —
-// không tạo file boss/index.js riêng).
+// Khi trả messages — gắn kèm attachments (có dataUrl).
+// Pipeline BOSS nằm trong file này (theo đúng sơ đồ).
 
 import express from "express";
 import multer from "multer";
-import { ObjectId } from "mongodb";
 
 import {
   createConversation,
@@ -22,7 +21,10 @@ import {
   updateConversationTitle,
 } from "../db/conversations.js";
 import { listMessages } from "../db/messages.js";
-import { saveAttachment } from "../db/attachments.js";
+import {
+  saveAttachment,
+  listByMessage as listAttachmentsByMessage,
+} from "../db/attachments.js";
 
 import { nhanYeuCau as gwNhanYeuCau } from "../gateway/nhan-yeu-cau.js";
 import { chuyenYeuCauChoBoss } from "../gateway/chuyen-yeu-cau-cho-boss.js";
@@ -77,16 +79,33 @@ function getUserId(req) {
   return v ? String(v) : null;
 }
 
-function toObjectId(id) {
+/**
+ * Gắn attachments (kèm dataUrl) vào 1 message.
+ */
+async function attachFilesToMessage(msg) {
+  if (!msg) return msg;
   try {
-    return new ObjectId(String(id));
+    const atts = await listAttachmentsByMessage(String(msg._id));
+    const mapped = atts.map((a) => ({
+      id: String(a._id),
+      name: a.name,
+      type: a.type,
+      size: a.size,
+      url: a.url || "",
+      dataUrl: a.dataUrl || "",
+    }));
+    return {
+      ...msg,
+      id: String(msg._id),
+      attachments: mapped,
+    };
   } catch {
-    return null;
+    return { ...msg, id: String(msg._id), attachments: [] };
   }
 }
 
 // ============================================================
-// PIPELINE BOSS — CHẠY 1 LƯỢT
+// PIPELINE BOSS
 // ============================================================
 
 async function runBossPipeline({
@@ -147,7 +166,7 @@ async function runBossPipeline({
     signal,
   });
 
-  // Nếu BOSS cũ lỗi → gọi BOSS mới (theo dự án PHẦN 01, mục 5)
+  // Nếu BOSS cũ lỗi → gọi BOSS mới
   if (!bossRes.ok) {
     await logWarn("BOSS cũ lỗi, gọi BOSS mới", {
       userId,
@@ -176,7 +195,7 @@ async function runBossPipeline({
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
   const bossPlan = bossRes.ok ? bossRes.text : "";
 
-  // 6. BOSS viết format điều phối
+  // 6. BOSS viết format
   const formatRes = await vietFormat({
     userId,
     conversationId,
@@ -215,7 +234,7 @@ async function runBossPipeline({
 
   if (!linh.ok) return { ok: false, error: linh.error || "Lính không hoàn thành" };
 
-  // 9. Nhận + đánh giá kết quả
+  // 9. Nhận + đánh giá
   const received = await nhanKetQuaLinh({
     userId,
     conversationId,
@@ -228,7 +247,7 @@ async function runBossPipeline({
     mergedText: received.merged || linh.text,
   });
 
-  // 10. Nếu là code → vòng lặp Sandbox cho tới khi đúng
+  // 10. Nếu là code → Sandbox
   let finalText = linh.text || received.merged || "";
   let sandboxMeta = null;
   let codeMeta = null;
@@ -285,7 +304,7 @@ async function runBossPipeline({
 }
 
 // ============================================================
-// XÂY MESSAGES CHO BOSS
+// XÂY MESSAGES
 // ============================================================
 
 function buildBossPlanMessages({ userRequest, analysis, webContext }) {
@@ -322,10 +341,6 @@ function buildBossPlanMessages({ userRequest, analysis, webContext }) {
     { role: "user", content: lines.join("\n") },
   ];
 }
-
-// ============================================================
-// XÂY MESSAGES CHO LÍNH
-// ============================================================
 
 function buildSoldierMessages({ userRequest, format, webContext }) {
   const lines = [
@@ -367,10 +382,6 @@ function buildSoldierMessages({ userRequest, format, webContext }) {
   ];
 }
 
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
-
 function guessLanguage(text) {
   if (typeof text !== "string") return "javascript";
   const m = text.match(/```([a-zA-Z0-9+\-#.]+)/);
@@ -399,7 +410,7 @@ function extractCodeBlock(text, language = "") {
 }
 
 // ============================================================
-// ROUTE — GỬI TIN NHẮN (có hỗ trợ tệp đính kèm)
+// ROUTE — GỬI TIN NHẮN (có tệp đính kèm)
 // ============================================================
 
 router.post("/send", upload.array("attachments", 10), async (req, res) => {
@@ -409,7 +420,6 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
     }
 
-    // multer đưa form fields vào req.body
     const conversationId = req.body?.conversationId;
     const text = req.body?.text || "";
     const files = Array.isArray(req.files) ? req.files : [];
@@ -421,9 +431,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
     }
 
     if (!String(text).trim() && files.length === 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Tin nhắn rỗng" });
+      return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
     }
 
     // 1. Rồng Thần nhận yêu cầu
@@ -437,7 +445,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       return res.status(400).json({ ok: false, message: recv.error });
     }
 
-    // 1b. Lưu tệp đính kèm vào DB
+    // 1b. Lưu tệp đính kèm
     const savedAttachments = [];
     if (files.length > 0 && recv.userMessage?._id) {
       for (const f of files) {
@@ -461,6 +469,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
             name: att.name,
             type: att.type,
             size: att.size,
+            url: "",
             dataUrl: att.dataUrl,
           });
         } catch (e) {
@@ -471,7 +480,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       }
     }
 
-    // 2. Chuyển cho BOSS (đã có khóa tránh xung đột)
+    // 2. Chuyển cho BOSS
     const bossResult = await chuyenYeuCauChoBoss({
       userId,
       conversationId,
@@ -480,7 +489,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       runBoss: runBossPipeline,
     });
 
-    // 3. Rồng Thần nhận kết quả từ BOSS
+    // 3. Nhận kết quả từ BOSS
     const received = await nhanKetQuaTuBoss({
       userId,
       conversationId,
@@ -490,7 +499,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       return res.status(500).json({ ok: false, message: received.error });
     }
 
-    // 4. Rồng Thần trả kết quả cho User (lưu vào DB)
+    // 4. Trả kết quả cho User
     const delivered = await traKetQuaChoUser({
       userId,
       conversationId,
@@ -503,8 +512,15 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
 
     return res.json({
       ok: true,
-      userMessage: { ...recv.userMessage, attachments: savedAttachments },
-      aiMessage: delivered.aiMessage,
+      userMessage: {
+        ...recv.userMessage,
+        id: String(recv.userMessage._id),
+        attachments: savedAttachments,
+      },
+      aiMessage: {
+        ...delivered.aiMessage,
+        id: String(delivered.aiMessage._id),
+      },
     });
   } catch (err) {
     await logWarn("Lỗi /chat/send", { error: err?.message || String(err) });
@@ -519,49 +535,62 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
 router.post("/conversations", async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
     const { projectId = null, title = null } = req.body || {};
     const convo = await createConversation({ userId, projectId, title });
-    return res.json({ ok: true, conversation: convo });
+    return res.json({
+      ok: true,
+      conversation: { ...convo, id: String(convo._id) },
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, message: "Lỗi server" });
   }
 });
 
 // ============================================================
-// ROUTE — LẤY TIN NHẮN
+// ROUTE — LẤY TIN NHẮN (kèm attachments + dataUrl)
 // ============================================================
 
 router.get("/conversations/:conversationId/messages", async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
     const { conversationId } = req.params;
     const convo = await getConversation(userId, conversationId);
     if (!convo) {
-      return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Không tìm thấy hội thoại" });
     }
-    const items = await listMessages(conversationId);
+
+    const raw = await listMessages(conversationId);
+    const items = await Promise.all(raw.map(attachFilesToMessage));
+
     return res.json({ ok: true, items });
   } catch (err) {
+    await logWarn("Lỗi get messages", { error: err?.message || String(err) });
     return res.status(500).json({ ok: false, message: "Lỗi server" });
   }
 });
 
 // ============================================================
-// ROUTE — LẤY HỘI THOẠI GẦN ĐÂY
+// ROUTE — HỘI THOẠI GẦN ĐÂY
 // ============================================================
 
 router.get("/conversations/recent", async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
     const limit = Number(req.query.limit) || 10;
     const items = await listRecentConversations(userId, { limit });
-    return res.json({ ok: true, items });
+    const mapped = items.map((c) => ({ ...c, id: String(c._id) }));
+    return res.json({ ok: true, items: mapped });
   } catch (err) {
     return res.status(500).json({ ok: false, message: "Lỗi server" });
   }
@@ -574,11 +603,13 @@ router.get("/conversations/recent", async (req, res) => {
 router.delete("/conversations/:conversationId", async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
     const { conversationId } = req.params;
     const ok = await dbDeleteConversation(userId, conversationId);
-    if (!ok) return res.status(404).json({ ok: false, message: "Không xóa được" });
+    if (!ok)
+      return res.status(404).json({ ok: false, message: "Không xóa được" });
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ ok: false, message: "Lỗi server" });
@@ -592,14 +623,17 @@ router.delete("/conversations/:conversationId", async (req, res) => {
 router.patch("/conversations/:conversationId", async (req, res) => {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
     const { conversationId } = req.params;
     const { title } = req.body || {};
-    if (!title) return res.status(400).json({ ok: false, message: "Thiếu title" });
+    if (!title)
+      return res.status(400).json({ ok: false, message: "Thiếu title" });
 
     const convo = await getConversation(userId, conversationId);
-    if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy" });
+    if (!convo)
+      return res.status(404).json({ ok: false, message: "Không tìm thấy" });
 
     const ok = await updateConversationTitle(conversationId, String(title));
     return res.json({ ok });
