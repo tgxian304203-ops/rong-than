@@ -1,11 +1,29 @@
 // server/boss/danh-gia-ket-qua.js
 // Nhiệm vụ: BOSS đánh giá kết quả lính trả về.
+//
+// Sửa: Ưu tiên needCode TRƯỚC — nếu là code → bắt buộc Sandbox.
+// Chỉ xét failures khi KHÔNG phải code.
 
 export async function danhGiaKetQua({ analysis, mergedText, failures }) {
   const needCode = !!analysis?.needCode;
   const needWeb = !!analysis?.needWeb;
 
-  // Nếu có lỗi lính → báo cần sửa
+  // ============================================================
+  // ƯU TIÊN 1 — NẾU LÀ CODE → BẮT BUỘC SANDBOX
+  // ============================================================
+  if (needCode) {
+    return {
+      ok: true,
+      needSandbox: true,
+      needWeb: false,
+      needFix: false,
+      reason: "Nhiệm vụ liên quan code → phải kiểm Sandbox",
+    };
+  }
+
+  // ============================================================
+  // XÉT FAILURES (chỉ khi không phải code)
+  // ============================================================
   if (Array.isArray(failures) && failures.length > 0) {
     return {
       ok: false,
@@ -17,17 +35,9 @@ export async function danhGiaKetQua({ analysis, mergedText, failures }) {
     };
   }
 
-  // Nếu là code → bắt buộc kiểm Sandbox
-  if (needCode) {
-    return {
-      ok: true,
-      needSandbox: true,
-      needWeb: false,
-      needFix: false,
-      reason: "Nhiệm vụ liên quan code → phải kiểm Sandbox",
-    };
-  }
-
+  // ============================================================
+  // NỘI DUNG
+  // ============================================================
   const hasContent =
     typeof mergedText === "string" && mergedText.trim().length > 0;
   if (!hasContent) {
@@ -45,7 +55,9 @@ export async function danhGiaKetQua({ analysis, mergedText, failures }) {
     needSandbox: false,
     needWeb,
     needFix: false,
-    reason: needWeb ? "Nhiệm vụ cần web — kiểm tra ngữ cảnh" : "Không cần Sandbox",
+    reason: needWeb
+      ? "Nhiệm vụ cần web — kiểm tra ngữ cảnh"
+      : "Không cần Sandbox",
   };
 }
 
