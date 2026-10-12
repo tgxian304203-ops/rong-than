@@ -25,10 +25,6 @@ export const LIMITS = {
   // SANDBOX
   // ============================================================
   SANDBOX_TIMEOUT_MS: env.SANDBOX_TIMEOUT_MS,
-
-  // Số vòng lặp sửa code tối đa MỖI LẦN user gửi yêu cầu.
-  // Hết vòng → trả code + thông báo "cần sửa tiếp".
-  // User bấm nút "Sửa tiếp" → tiếp tục từ code hiện tại.
   SANDBOX_MAX_FIX_ITERATIONS: 5,
 
   // ============================================================
@@ -37,6 +33,12 @@ export const LIMITS = {
   MAX_UPLOAD_BYTES: env.MAX_UPLOAD_MB * 1024 * 1024,
   MAX_ATTACHMENTS_PER_MESSAGE: 10,
   MAX_MESSAGE_LENGTH: 20000,
+
+  // ============================================================
+  // NGỮ CẢNH HỘI THOẠI
+  // ============================================================
+  // Số tin nhắn gần nhất gửi kèm cho BOSS / lính.
+  CONTEXT_MESSAGES_LIMIT: 500,
 
   // ============================================================
   // DỰ ÁN / HỘI THOẠI

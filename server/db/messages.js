@@ -51,6 +51,28 @@ export async function countMessages(conversationId) {
   });
 }
 
+/**
+ * Lấy N tin nhắn gần nhất — sắp xếp theo thời gian TĂNG DẦN.
+ *
+ * @param {string} conversationId
+ * @param {number} [limit=500]
+ * @returns {Promise<Array>}
+ */
+export async function listRecentMessages(conversationId, limit = 500) {
+  const capped = Math.max(1, Math.min(Number(limit) || 500, 2000));
+
+  const items = await col()
+    .find({ conversationId: String(conversationId) })
+    .sort({ createdAt: -1 })   // mới nhất trước
+    .limit(capped)
+    .toArray();
+
+  // Đảo lại thành cũ → mới
+  items.reverse();
+
+  return items;
+}
+
 // ============================================================
 // XÓA
 // ============================================================

@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Sửa extractCodeBlock + guessLanguage: ưu tiên block code THẬT, bỏ qua cấu trúc thư mục.
+// Đọc 500 tin gần nhất làm ngữ cảnh. Ẩn vai trò nội bộ khi trả lời User.
 
 import express from "express";
 import multer from "multer";
@@ -13,7 +13,7 @@ import {
   deleteAllNonProjectConversations,
   updateConversationTitle,
 } from "../db/conversations.js";
-import { listMessages } from "../db/messages.js";
+import { listMessages, listRecentMessages } from "../db/messages.js";
 import {
   saveAttachment,
   listByMessage as listAttachmentsByMessage,
@@ -95,6 +95,22 @@ async function attachFilesToMessage(msg) {
 }
 
 // ============================================================
+// ĐỌC LỊCH SỬ HỘI THOẠI LÀM NGỮ CẢNH
+// ============================================================
+
+async function loadConversationHistory(conversationId) {
+  try {
+    const msgs = await listRecentMessages(
+      conversationId,
+      LIMITS.CONTEXT_MESSAGES_LIMIT
+    );
+    return msgs;
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================
 // PIPELINE BOSS — LẦN ĐẦU
 // ============================================================
 
@@ -113,11 +129,17 @@ async function runBossPipeline({
   });
   if (!recv.ok) return { ok: false, error: recv.error };
 
+  // Đọc lịch sử (không gồm tin vừa gửi — vì nó vừa mới lưu)
+  const history = await loadConversationHistory(conversationId);
+  // Loại tin user vừa gửi (tin cuối) — để tránh trùng
+  const historyForContext = history.slice(0, -1);
+
   const analysis = await phanTichYeuCau({
     userId,
     conversationId,
     userRequest,
     userLabel,
+    history: historyForContext,
   });
   if (!analysis.ok) return { ok: false, error: analysis.error };
 
@@ -139,6 +161,7 @@ async function runBossPipeline({
     userRequest,
     analysis: analysis.analysis,
     webContext,
+    history: historyForContext,
   });
 
   let bossRes = await goiBoss({
@@ -185,6 +208,7 @@ async function runBossPipeline({
     userRequest,
     analysis: analysis.analysis,
     webContext: [webContext, bossPlan].filter(Boolean).join("\n\n"),
+    history: historyForContext,
   });
   if (!formatRes.ok) return { ok: false, error: formatRes.error };
 
@@ -200,6 +224,7 @@ async function runBossPipeline({
     userRequest,
     format: formatRes.format,
     webContext,
+    history: historyForContext,
   });
 
   const linh = await goiLinh({
@@ -243,14 +268,6 @@ async function runBossPipeline({
   if (danhGia.needSandbox) {
     const language = guessLanguage(finalText);
     const initialCode = extractCodeBlock(finalText, language);
-
-    await logInfo("BOSS: chuẩn bị chạy Sandbox", {
-      userId,
-      conversationId,
-      language,
-      codeLength: initialCode.length,
-      codePreview: initialCode.slice(0, 100),
-    });
 
     if (initialCode) {
       const loop = await vongLapSua({
@@ -299,11 +316,6 @@ async function runBossPipeline({
         }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
         resumeAvailable = true;
       }
-    } else {
-      await logWarn("BOSS: không tìm thấy code block để Sandbox", {
-        userId,
-        conversationId,
-      });
     }
   }
 
@@ -337,10 +349,6 @@ async function runBossResume({ userId, conversationId, signal }) {
 
   const latest = await getLatestCodeArtifact(conversationId);
   if (!latest || !latest.code) {
-    await logWarn("BOSS: Resume thất bại — không có code cũ", {
-      userId,
-      conversationId,
-    });
     return {
       ok: false,
       error: "Không tìm thấy code để sửa tiếp. Vui lòng tạo code mới.",
@@ -422,48 +430,90 @@ async function runBossResume({ userId, conversationId, signal }) {
 // XÂY MESSAGES
 // ============================================================
 
-function buildBossPlanMessages({ userRequest, analysis, webContext }) {
+function buildBossPlanMessages({ userRequest, analysis, webContext, history = [] }) {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "Bạn là điều phối viên nội bộ. Trả lời ngắn gọn cho bộ phận kỹ thuật. " +
+        "Không dùng LaTeX hay $$.",
+    },
+  ];
+
+  // Thêm lịch sử hội thoại làm ngữ cảnh
+  for (const m of history) {
+    if (!m.text || !m.text.trim()) continue;
+    const role = m.role === "ai" ? "assistant" : "user";
+    messages.push({
+      role,
+      content: m.text,
+    });
+  }
+
+  // Thêm yêu cầu hiện tại
   const lines = [
-    "Bạn là BOSS của Rồng Thần.",
-    "Nhiệm vụ: lập kế hoạch xử lý yêu cầu User và mô tả format điều phối lính.",
-    "",
-    "Yêu cầu User:",
+    "Yêu cầu hiện tại của User:",
     userRequest,
     "",
     "Phân tích sơ bộ:",
     `- Cần tra web: ${analysis.needWeb ? "có" : "không"}`,
     `- Liên quan code: ${analysis.needCode ? "có" : "không"}`,
-    `- Loại nhiệm vụ dự kiến: ${analysis.estimatedTaskType}`,
+    `- Loại nhiệm vụ: ${analysis.estimatedTaskType}`,
   ];
 
+  if (analysis.isRedo) {
+    lines.push(`- Đây là yêu cầu CHỈNH SỬA LẠI từ nội dung trước`);
+    lines.push(`- taskType kế thừa: ${analysis.inheritedTaskType}`);
+  }
+
   if (webContext) {
-    lines.push("", "Dữ liệu Web BOSS đã tra:", webContext);
+    lines.push("", "Dữ liệu Web:", webContext);
   }
 
   lines.push(
     "",
-    "Trả về kế hoạch ngắn gọn (không cần code).",
-    "Khi trình bày công thức toán: dùng chữ thường. KHÔNG dùng $$ hoặc LaTeX."
+    "Trả về kế hoạch xử lý ngắn gọn."
   );
 
-  return [
+  messages.push({ role: "user", content: lines.join("\n") });
+
+  return messages;
+}
+
+function buildSoldierMessages({ userRequest, format, webContext, history = [] }) {
+  const messages = [
     {
       role: "system",
       content:
-        "Bạn là BOSS — điều phối, không tự viết code dài. Không dùng LaTeX hay $$.",
+        "Bạn là trợ lý AI thông minh. Trả lời TRỰC TIẾP cho người dùng bằng tiếng Việt.\n" +
+        "QUAN TRỌNG:\n" +
+        "- KHÔNG nhắc đến 'BOSS', 'Tiểu Não', 'lính', 'báo cáo', 'thị phi'.\n" +
+        "- KHÔNG dùng cụm 'Rõ thưa BOSS', 'Báo cáo BOSS', 'Xin chờ thị phi'.\n" +
+        "- Trả lời tự nhiên, thân thiện, như đang trò chuyện với người dùng.\n" +
+        "- Không dùng LaTeX hay ký hiệu $$.\n" +
+        "- Nếu User yêu cầu 'X chữ', phải đảm bảo đủ X chữ. Đếm trước khi trả lời.",
     },
-    { role: "user", content: lines.join("\n") },
   ];
-}
 
-function buildSoldierMessages({ userRequest, format, webContext }) {
+  // Thêm lịch sử hội thoại
+  for (const m of history) {
+    if (!m.text || !m.text.trim()) continue;
+    const role = m.role === "ai" ? "assistant" : "user";
+    messages.push({
+      role,
+      content: m.text,
+    });
+  }
+
+  // Yêu cầu hiện tại + format
   const lines = [
-    "Bạn là lính của Tiểu Não. Nhiệm vụ do BOSS giao:",
+    "Yêu cầu hiện tại của User:",
+    userRequest,
     "",
-    "Mục tiêu:",
+    "Hướng dẫn xử lý:",
     format.goal,
     "",
-    `Loại: ${format.taskType}`,
+    `Loại nhiệm vụ: ${format.taskType}`,
   ];
 
   if (format.constraints?.length) {
@@ -476,31 +526,23 @@ function buildSoldierMessages({ userRequest, format, webContext }) {
   }
 
   if (webContext) {
-    lines.push("", "Dữ liệu Web BOSS cung cấp:", webContext);
+    lines.push("", "Dữ liệu tra cứu:", webContext);
   }
 
   lines.push(
     "",
-    "Yêu cầu gốc của User:",
-    userRequest,
-    "",
-    "Hãy trả về kết quả đầy đủ. Nếu là code, đặt trong ```<lang>...```.",
-    "",
-    "Khi trình bày công thức toán: dùng chữ thường. KHÔNG dùng $$ hoặc LaTeX."
+    "Trả lời trực tiếp cho User bằng tiếng Việt.",
+    "Nếu là code, đặt trong ```<lang>...```.",
+    "Nếu User nói 'làm lại', 'chưa đủ', 'sửa lại' → tiếp tục cải thiện nội dung trước đó."
   );
 
-  return [
-    {
-      role: "system",
-      content:
-        "Bạn là lính. Trả về kết quả trực tiếp cho BOSS. Không dùng LaTeX hay $$.",
-    },
-    { role: "user", content: lines.join("\n") },
-  ];
+  messages.push({ role: "user", content: lines.join("\n") });
+
+  return messages;
 }
 
 // ============================================================
-// ĐOÁN NGÔN NGỮ — ƯU TIÊN HTML/JS/PYTHON THẬT
+// ĐOÁN NGÔN NGỮ + EXTRACT CODE
 // ============================================================
 
 function guessLanguage(text) {
@@ -516,22 +558,18 @@ function guessLanguage(text) {
     const body = match[2] || "";
     let score = 0;
 
-    // Ưu tiên ngôn ngữ cụ thể
     if (lang === "html" || lang === "htm") score += 100;
     else if (lang === "javascript" || lang === "js") score += 80;
     else if (lang === "python" || lang === "py") score += 80;
     else if (lang === "typescript" || lang === "ts") score += 60;
     else if (lang === "css") score += 40;
     else if (lang) score += 10;
-    else score += 0;
 
-    // Block chứa code thật
     if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
     if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
     if (/def\s|import\s|class\s/i.test(body)) score += 100;
     if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
 
-    // Block cấu trúc thư mục → trừ điểm
     if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
     if (
       /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&
@@ -553,10 +591,6 @@ function guessLanguage(text) {
   return best;
 }
 
-// ============================================================
-// LẤY CODE BLOCK — ƯU TIÊN BLOCK CODE THẬT
-// ============================================================
-
 function extractCodeBlock(text, language = "") {
   if (typeof text !== "string") return "";
 
@@ -570,21 +604,17 @@ function extractCodeBlock(text, language = "") {
     const body = match[2] || "";
     let score = 0;
 
-    // Khớp language mong muốn
     if (language && lang.includes(language)) score += 100;
 
-    // Block có language cụ thể
     if (lang === "html" || lang === "htm") score += 50;
     if (lang === "javascript" || lang === "js") score += 40;
     if (lang === "python" || lang === "py") score += 40;
 
-    // Block có code thật
     if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
     if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
     if (/def\s|import\s|class\s/i.test(body)) score += 100;
     if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
 
-    // Block cấu trúc thư mục → trừ điểm nặng
     if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
     if (
       /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&

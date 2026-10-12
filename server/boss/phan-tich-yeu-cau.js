@@ -1,28 +1,42 @@
 // server/boss/phan-tich-yeu-cau.js
 // Nhiệm vụ: BOSS phân tích yêu cầu User.
 //
-// QUY TẮC PHÂN LOẠI (theo yêu cầu dự án):
-//   - Câu có từ "tạo"  → taskType = "code"
-//   - Câu có từ "viết" → taskType = "bulk" (văn bản)
-//   - Ưu tiên "tạo" nếu có cả 2 từ
-//   - Không áp dụng ngữ cảnh — chỉ quan tâm động từ.
+// QUY TẮC PHÂN LOẠI:
+//   - "tạo" → code, "viết" → bulk.
+//   - Nếu là "làm lại" → KẾ THỪA taskType từ tin AI gần nhất.
 
 import { moveToStep, WORK_STEP, WORK_STATUS } from "../state/luu-trang-thai.js";
 import { logInfo } from "../logs/ghi-log.js";
+
+// ============================================================
+// TỪ KHÓA "LÀM LẠI"
+// ============================================================
+
+const RE_DO_KEYWORDS =
+  /\b(làm lại|sửa lại|thử lại|chưa đủ|chưa đúng|dài hơn|ngắn hơn|khác đi|đổi lại|viết lại|thêm|bớt|tiếp tục)\b/i;
 
 export async function phanTichYeuCau({
   userId,
   conversationId,
   userRequest,
   userLabel = null,
+  history = [],
 }) {
   const req = String(userRequest || "").trim();
   if (!req) return { ok: false, analysis: null, error: "Yêu cầu rỗng" };
 
+  // ============================================================
+  // KIỂM TRA "LÀM LẠI"
+  // ============================================================
+  const isRedo = RE_DO_KEYWORDS.test(req);
+  const inheritedTaskType = isRedo ? findLastTaskType(history) : null;
+
   const analysis = {
     needWeb: userLabel === "need_web" || detectNeedWeb(req),
     needCode: userLabel === "need_code" || detectNeedCode(req),
-    estimatedTaskType: guessTaskType(req),
+    estimatedTaskType: inheritedTaskType || guessTaskType(req),
+    isRedo,
+    inheritedTaskType,
     rawLength: req.length,
   };
 
@@ -45,7 +59,24 @@ export async function phanTichYeuCau({
 }
 
 // ============================================================
-// PHÁT HIỆN NHU CẦU WEB
+// TÌM TASKTYPE TỪ TIN AI GẦN NHẤT
+// ============================================================
+
+function findLastTaskType(history) {
+  if (!Array.isArray(history) || history.length === 0) return null;
+
+  // Duyệt ngược — tìm tin AI gần nhất có meta.analysis.estimatedTaskType
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role === "ai" && m.meta?.analysis?.estimatedTaskType) {
+      return m.meta.analysis.estimatedTaskType;
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// PHÁT HIỆN NHU CẦU
 // ============================================================
 
 function detectNeedWeb(req) {
@@ -58,11 +89,6 @@ function detectNeedWeb(req) {
   return keywords.some((w) => k.includes(w));
 }
 
-// ============================================================
-// PHÁT HIỆN NHU CẦU CODE
-// ============================================================
-// Quy tắc: có từ "tạo" → cần code. Có từ "viết" → không cần code.
-
 function detectNeedCode(req) {
   const k = req.toLowerCase();
   return /\btạo\b/.test(k);
@@ -71,32 +97,15 @@ function detectNeedCode(req) {
 // ============================================================
 // ĐOÁN LOẠI NHIỆM VỤ
 // ============================================================
-// Quy tắc cứng:
-//   - Có "tạo"  → "code" (ưu tiên cao nhất)
-//   - Có "viết" → "bulk" (văn bản)
-//   - Còn lại → đoán theo từ khóa khác
 
 function guessTaskType(req) {
   const k = req.toLowerCase();
 
-  // ===== ƯU TIÊN 1: Có "tạo" → code =====
-  if (/\btạo\b/.test(k)) {
-    return "code";
-  }
+  if (/\btạo\b/.test(k)) return "code";
+  if (/\bviết\b/.test(k)) return "bulk";
 
-  // ===== ƯU TIÊN 2: Có "viết" → bulk (văn bản) =====
-  if (/\bviết\b/.test(k)) {
-    return "bulk";
-  }
+  if (/\b(sửa|fix|debug)\b/.test(k)) return "fix";
 
-  // ===== Các trường hợp khác — đoán theo từ khóa =====
-
-  // FIX (sửa lỗi)
-  if (/\b(sửa|fix|debug)\b/.test(k)) {
-    return "fix";
-  }
-
-  // CODE (có từ khóa code cụ thể)
   if (
     /\b(code|lập trình|function|script|javascript|typescript|python|react|node|html|css|sql|api)\b/.test(
       k
@@ -105,12 +114,8 @@ function guessTaskType(req) {
     return "code";
   }
 
-  // TÓM TẮT
-  if (/\b(tóm tắt|summary|tổng hợp)\b/.test(k)) {
-    return "summary";
-  }
+  if (/\b(tóm tắt|summary|tổng hợp)\b/.test(k)) return "summary";
 
-  // ĐỌC TÀI LIỆU DÀI
   if (
     /\b(đọc|tài liệu|document|sách|báo cáo)\b/.test(k) &&
     k.length > 200
@@ -118,17 +123,10 @@ function guessTaskType(req) {
     return "read-long-doc";
   }
 
-  // TRA CỨU
-  if (/\b(tra|tìm|search|research|nghiên cứu)\b/.test(k)) {
-    return "research";
-  }
+  if (/\b(tra|tìm|search|research|nghiên cứu)\b/.test(k)) return "research";
 
-  // PHÂN TÍCH
-  if (/\b(phân tích|analysis|đánh giá)\b/.test(k)) {
-    return "analysis";
-  }
+  if (/\b(phân tích|analysis|đánh giá)\b/.test(k)) return "analysis";
 
-  // Mặc định — tác vụ văn bản thường
   return "bulk";
 }
 
