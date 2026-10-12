@@ -1,23 +1,11 @@
 // server/tieu-nao/tra-ket-qua-cho-boss.js
-// Nhiệm vụ: Trả kết quả của lính về cho BOSS.
-// Quy tắc dự án (PHẦN 01, mục 8, 9):
-//   - Lính làm việc BOSS giao.
-//   - Sau khi làm xong phải đưa câu trả lời cho BOSS.
+// Nhiệm vụ: Trả kết quả lính về cho BOSS.
+// Bao gồm: output thành công + lịch sử lỗi của các lính thất bại.
 
 import { listByTask as listSubTasks } from "../db/subBrainTasks.js";
 import { listByTask as listResults } from "../db/taskResults.js";
 import { logInfo } from "../logs/ghi-log.js";
 
-// ============================================================
-// TRẢ KẾT QUẢ
-// ============================================================
-
-/**
- * Gộp kết quả của tất cả lính đã làm xong cho 1 task, trả về BOSS.
- * @param {object} p
- * @param {string} p.taskId
- * @returns {Promise<{ok: boolean, items: Array, merged?: string, error?: string}>}
- */
 export async function traKetQuaChoBoss({ taskId }) {
   if (!taskId) {
     return { ok: false, items: [], error: "Thiếu taskId" };
@@ -30,7 +18,6 @@ export async function traKetQuaChoBoss({ taskId }) {
 
   const results = await listResults(taskId);
 
-  // Ghép kết quả mới nhất của mỗi subtask
   const latestBySub = new Map();
   for (const r of results) {
     const sid = String(r.subTaskId);
@@ -59,10 +46,19 @@ export async function traKetQuaChoBoss({ taskId }) {
     };
   });
 
-  // Gộp các output thành 1 chuỗi để BOSS dễ đọc (chỉ khi tất cả cùng done)
-  const allDone = items.every((it) => it.status === "done" && it.result);
-  const merged = allDone
-    ? items
+  // Tìm subtask thành công
+  const successItems = items.filter(
+    (it) =>
+      it.status === "done" &&
+      it.result &&
+      it.result.status === "success" &&
+      it.result.output
+  );
+
+  const anySuccess = successItems.length > 0;
+
+  const merged = anySuccess
+    ? successItems
         .map(
           (it, idx) =>
             `# Lính ${idx + 1} (${it.soldierModel}):\n${it.result.output}`
@@ -70,17 +66,30 @@ export async function traKetQuaChoBoss({ taskId }) {
         .join("\n\n")
     : null;
 
+  // Lịch sử lỗi cho BOSS (nếu không có thành công)
+  const failures = items
+    .filter((it) => it.status === "skipped" || it.status === "error")
+    .map((it) => ({
+      soldier: it.soldierModel,
+      provider: it.soldierProvider,
+      error: it.result?.meta?.error || "Không rõ",
+      partialOutput: it.result?.output || "",
+    }));
+
   await logInfo("Tiểu Não trả kết quả cho BOSS", {
     taskId,
-    count: items.length,
-    allDone,
+    totalSubtasks: items.length,
+    successCount: successItems.length,
+    failureCount: failures.length,
+    anySuccess,
   });
 
   return {
-    ok: allDone,
+    ok: anySuccess,
     items,
     merged: merged || undefined,
-    error: allDone ? undefined : "Chưa phải tất cả lính đều xong",
+    failures: failures.length > 0 ? failures : undefined,
+    error: anySuccess ? undefined : "Không có lính nào thành công",
   };
 }
 

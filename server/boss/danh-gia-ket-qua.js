@@ -1,23 +1,21 @@
 // server/boss/danh-gia-ket-qua.js
 // Nhiệm vụ: BOSS đánh giá kết quả lính trả về.
-// Quy tắc dự án (PHẦN 02, luồng 3):
-//   - Nếu nhiệm vụ liên quan code → BOSS kiểm tra chạy thử Sandbox.
-//   - Đúng → trả về Rồng Thần.
-//   - Sai → viết format cho lính sửa.
 
-// ============================================================
-// ĐÁNH GIÁ
-// ============================================================
-
-/**
- * @param {object} p
- * @param {object} p.analysis     - từ phan-tich-yeu-cau
- * @param {string} [p.mergedText] - kết quả gộp từ lính
- * @returns {Promise<{ok: boolean, needSandbox: boolean, needWeb: boolean, reason: string}>}
- */
-export async function danhGiaKetQua({ analysis, mergedText }) {
+export async function danhGiaKetQua({ analysis, mergedText, failures }) {
   const needCode = !!analysis?.needCode;
   const needWeb = !!analysis?.needWeb;
+
+  // Nếu có lỗi lính → báo cần sửa
+  if (Array.isArray(failures) && failures.length > 0) {
+    return {
+      ok: false,
+      needSandbox: false,
+      needWeb: false,
+      needFix: true,
+      failures,
+      reason: `${failures.length} lính thất bại — cần sửa`,
+    };
+  }
 
   // Nếu là code → bắt buộc kiểm Sandbox
   if (needCode) {
@@ -25,17 +23,19 @@ export async function danhGiaKetQua({ analysis, mergedText }) {
       ok: true,
       needSandbox: true,
       needWeb: false,
+      needFix: false,
       reason: "Nhiệm vụ liên quan code → phải kiểm Sandbox",
     };
   }
 
-  // Nếu không phải code → chỉ cần có nội dung trả về
-  const hasContent = typeof mergedText === "string" && mergedText.trim().length > 0;
+  const hasContent =
+    typeof mergedText === "string" && mergedText.trim().length > 0;
   if (!hasContent) {
     return {
       ok: false,
       needSandbox: false,
       needWeb: false,
+      needFix: true,
       reason: "Lính không trả về nội dung nào",
     };
   }
@@ -44,6 +44,7 @@ export async function danhGiaKetQua({ analysis, mergedText }) {
     ok: true,
     needSandbox: false,
     needWeb,
+    needFix: false,
     reason: needWeb ? "Nhiệm vụ cần web — kiểm tra ngữ cảnh" : "Không cần Sandbox",
   };
 }

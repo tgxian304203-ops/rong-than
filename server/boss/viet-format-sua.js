@@ -1,27 +1,10 @@
 // server/boss/viet-format-sua.js
-// Nhiệm vụ: BOSS viết format cho lính sửa code khi Sandbox FAIL.
-// Quy tắc dự án (PHẦN 01, mục 10):
-//   - Sai → BOSS đưa ra cách khắc phục và tiếp tục viết format cho lính sửa.
+// Nhiệm vụ: BOSS viết format cho lính mới khi lính cũ lỗi.
+// Truyền: prompt gốc + lỗi lính cũ + output dở (nếu có).
 
 import { moveToStep, WORK_STEP, WORK_STATUS } from "../state/luu-trang-thai.js";
 import { logInfo } from "../logs/ghi-log.js";
 
-// ============================================================
-// VIẾT FORMAT SỬA
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.goal            - mục tiêu ban đầu
- * @param {string} p.failedCode      - code bị lỗi
- * @param {string} p.stdout
- * @param {string} p.stderr
- * @param {number} [p.attempt]       - lần thử hiện tại
- * @param {string} [p.language]
- * @returns {Promise<{ok: boolean, format: object, error?: string}>}
- */
 export async function vietFormatSua({
   userId,
   conversationId,
@@ -31,29 +14,44 @@ export async function vietFormatSua({
   stderr,
   attempt = 1,
   language = "javascript",
+  failures = null,
 }) {
-  if (!failedCode) {
-    return { ok: false, format: null, error: "Thiếu code lỗi để sửa" };
+  if (!failedCode && (!failures || failures.length === 0)) {
+    return { ok: false, format: null, error: "Thiếu dữ liệu để sửa" };
   }
 
-  // BOSS đưa cách khắc phục sơ bộ (dựa trên stderr)
+  // Xây dựng mô tả lỗi từ failures
+  let failuresDesc = "";
+  if (Array.isArray(failures) && failures.length > 0) {
+    failuresDesc = failures
+      .map(
+        (f, i) =>
+          `Lính #${i + 1} (${f.soldier}): ${f.error}${
+            f.partialOutput ? ` — Output dở: ${f.partialOutput.slice(0, 200)}...` : ""
+          }`
+      )
+      .join("\n");
+  }
+
   const hint = buildHintFromError(stderr, stdout);
 
   const format = {
     taskType: "fix-code",
-    goal: `Sửa code để vượt qua kiểm thử. Mục tiêu gốc: ${goal || "(không rõ)"}`,
-    input: failedCode,
+    goal: `Hoàn thành nhiệm vụ. Mục tiêu gốc: ${goal || "(không rõ)"}`,
+    input: failedCode || "",
     constraints: [
       `Ngôn ngữ: ${language}`,
-      "Giữ nguyên hành vi đúng, chỉ sửa lỗi",
-      "Không đổi cấu trúc API công khai trừ khi cần",
+      "TIẾP TỤC từ chỗ lính trước đã dừng — KHÔNG làm lại từ đầu nếu có output dở",
+      "Nếu không có output → làm lại nhưng TRÁNH lỗi của lính trước",
     ],
-    expectedOutput: "Code đã sửa, chạy được và vượt kiểm thử",
+    expectedOutput: "Kết quả hoàn chỉnh, đúng yêu cầu",
     context: {
       attempt,
       stdout: stdout || "",
       stderr: stderr || "",
       hint,
+      failuresDesc,
+      previousFailures: failures || [],
     },
   };
 
@@ -64,18 +62,15 @@ export async function vietFormatSua({
     WORK_STATUS.WAITING_SOLDIER
   );
 
-  await logInfo("BOSS viết format sửa code", {
+  await logInfo("BOSS viết format sửa cho lính mới", {
     userId,
     conversationId,
     attempt,
+    failureCount: Array.isArray(failures) ? failures.length : 0,
   });
 
   return { ok: true, format };
 }
-
-// ============================================================
-// SINH GỢI Ý TỪ LỖI
-// ============================================================
 
 function buildHintFromError(stderr, stdout) {
   const s = String(stderr || "") + "\n" + String(stdout || "");
@@ -87,8 +82,8 @@ function buildHintFromError(stderr, stdout) {
   if (lower.includes("typeerror")) return "Lỗi kiểu — kiểm tra biến undefined / null.";
   if (lower.includes("referenceerror")) return "Tham chiếu sai — kiểm tra tên biến/hàm.";
   if (lower.includes("modulenotfound")) return "Thiếu module — kiểm tra import.";
-  if (lower.includes("indentation")) return "Lỗi thụt lề — kiểm tra khoảng trắng Python.";
   if (lower.includes("timeout")) return "Chạy quá lâu — kiểm tra vòng lặp vô hạn.";
+  if (lower.includes("quota") || lower.includes("429")) return "Hết quota — chuyển sang key/model khác.";
 
   return "Đọc kỹ stderr để tìm nguyên nhân.";
 }

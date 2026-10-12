@@ -1,8 +1,6 @@
 // server/boss/vong-lap-sua.js
-// Nhiệm vụ: Vòng lặp sửa code cho tới khi Sandbox ĐÚNG.
-//
-// Hỗ trợ resume: khi user bấm "Sửa tiếp", vòng lặp bắt đầu
-// từ code mới nhất trong DB — không làm lại từ đầu.
+// Nhiệm vụ: Vòng lặp sửa code cho tới khi ĐÚNG.
+// Lính mới nhận: prompt gốc + lỗi lính cũ + output dở.
 
 import { LIMITS } from "../config/limits.js";
 import { chonLinhTheoNhiemVu } from "../tieu-nao/chon-linh-theo-nhiem-vu.js";
@@ -12,18 +10,6 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 import { kiemTraSandbox } from "./kiem-tra-sandbox.js";
 import { vietFormatSua } from "./viet-format-sua.js";
 
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.bossSessionId
- * @param {string} p.language
- * @param {string} p.initialCode       — code bắt đầu vòng lặp
- * @param {string} [p.testCode]
- * @param {string} [p.goal]            — mục tiêu gốc (yêu cầu user)
- * @param {number} [p.maxAttempts]     — số vòng tối đa (mặc định lấy LIMITS)
- * @param {AbortSignal} [p.signal]
- */
 export async function vongLapSua({
   userId,
   conversationId,
@@ -38,6 +24,7 @@ export async function vongLapSua({
   let code = initialCode;
   let attempts = 0;
   let lastRun = null;
+  const failureHistory = [];
 
   const maxIter = Number.isFinite(maxAttempts)
     ? maxAttempts
@@ -56,6 +43,7 @@ export async function vongLapSua({
     await logInfo(`BOSS: vòng lặp sửa — lần thử ${attempts}/${maxIter}`, {
       userId,
       conversationId,
+      failureHistoryCount: failureHistory.length,
     });
 
     const check = await kiemTraSandbox({
@@ -85,6 +73,13 @@ export async function vongLapSua({
       };
     }
 
+    // Ghi lỗi vào lịch sử
+    failureHistory.push({
+      attempt: attempts,
+      error: check.stderr || check.error || "Không rõ",
+      partialOutput: code.slice(0, 500),
+    });
+
     if (attempts >= maxIter) {
       await logWarn("BOSS: vòng lặp sửa — hết lượt (cần sửa tiếp)", {
         userId,
@@ -102,6 +97,9 @@ export async function vongLapSua({
       };
     }
 
+    // ============================================================
+    // VIẾT FORMAT SỬA — KÈM LỊCH SỬ LỖI
+    // ============================================================
     const fixFormat = await vietFormatSua({
       userId,
       conversationId,
@@ -111,6 +109,7 @@ export async function vongLapSua({
       stderr: check.stderr,
       attempt: attempts,
       language,
+      failures: failureHistory,
     });
     if (!fixFormat.ok) {
       return {
@@ -146,18 +145,20 @@ export async function vongLapSua({
       payload: fixFormat.format,
     });
 
-    await logInfo("BOSS: gọi lính sửa code", {
+    await logInfo("BOSS: gọi lính sửa code (có ngữ cảnh)", {
       userId,
       conversationId,
       attempt: attempts,
       soldier: pick.soldier.name,
+      hasFailureHistory: failureHistory.length > 0,
     });
 
     const fixed = await goiLinh({
       userId,
       taskId: String(task._id),
       soldier: pick.soldier,
-      messages: buildFixMessages(fixFormat.format),
+      candidates: pick.candidates,
+      messages: buildFixMessages(fixFormat.format, failureHistory),
       payload: fixFormat.format,
       temperature: 0.3,
       maxTokens: 4096,
@@ -185,11 +186,15 @@ export async function vongLapSua({
   };
 }
 
-function buildFixMessages(format) {
+// ============================================================
+// MESSAGES CHO LÍNH SỬA
+// ============================================================
+
+function buildFixMessages(format, failureHistory = []) {
   const lines = [
     "Bạn là lính sửa code. Nhiệm vụ: sửa code để vượt qua kiểm thử.",
     "",
-    "Mục tiêu:",
+    "Mục tiêu gốc:",
     format.goal,
     "",
     "Ngôn ngữ:",
@@ -199,7 +204,7 @@ function buildFixMessages(format) {
     "",
     "Code hiện tại:",
     "```",
-    format.input,
+    format.input || "(chưa có)",
     "```",
   ];
 
@@ -208,6 +213,14 @@ function buildFixMessages(format) {
   }
   if (format.context?.hint) {
     lines.push("", "Gợi ý:", format.context.hint);
+  }
+
+  // Thêm lịch sử lỗi
+  if (failureHistory.length > 1) {
+    lines.push("", `[Lịch sử ${failureHistory.length - 1} lần sửa trước]`);
+    failureHistory.slice(0, -1).forEach((h) => {
+      lines.push(`- Lần ${h.attempt}: ${h.error}`);
+    });
   }
 
   lines.push(

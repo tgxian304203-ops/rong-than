@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Truyền danh sách BOSS/lính ứng viên để thử lần lượt khi hết quota/lỗi.
+// Khi lính thất bại → vòng lặp sửa với ngữ cảnh từ lỗi.
 
 import express from "express";
 import multer from "multer";
@@ -132,7 +132,6 @@ async function runBossPipeline({
     if (web.ok) webContext = formatWebResults(web.results);
   }
 
-  // Chọn BOSS — trả về cả candidates
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
@@ -142,7 +141,6 @@ async function runBossPipeline({
     webContext,
   });
 
-  // Gọi BOSS — truyền candidates để thử lần lượt
   let bossRes = await goiBoss({
     userId,
     conversationId,
@@ -190,7 +188,6 @@ async function runBossPipeline({
   });
   if (!formatRes.ok) return { ok: false, error: formatRes.error };
 
-  // Giao format — trả về candidates lính
   const giao = await giaoFormat({
     userId,
     conversationId,
@@ -205,7 +202,7 @@ async function runBossPipeline({
     webContext,
   });
 
-  // Gọi lính — truyền candidates để thử lần lượt
+  // Gọi lính — truyền candidates
   const linh = await goiLinh({
     userId,
     taskId: giao.taskId,
@@ -218,8 +215,14 @@ async function runBossPipeline({
     signal,
   });
 
-  if (!linh.ok)
-    return { ok: false, error: linh.error || "Lính không hoàn thành" };
+  if (!linh.ok) {
+    // Tất cả lính thất bại → trả về thông báo + lỗi
+    return {
+      ok: false,
+      error: linh.error || "Lính không hoàn thành",
+      errorHistory: linh.errorHistory,
+    };
+  }
 
   const received = await nhanKetQuaLinh({
     userId,
@@ -231,6 +234,7 @@ async function runBossPipeline({
   const danhGia = await danhGiaKetQua({
     analysis: analysis.analysis,
     mergedText: received.merged || linh.text,
+    failures: received.failures,
   });
 
   let finalText = linh.text || received.merged || "";
@@ -334,14 +338,6 @@ async function runBossResume({ userId, conversationId, signal }) {
 
   const language = latest.language || "javascript";
   const currentCode = latest.code;
-
-  await logInfo("BOSS: Resume — đọc code mới nhất", {
-    userId,
-    conversationId,
-    language,
-    version: latest.version,
-    codeLength: currentCode.length,
-  });
 
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
