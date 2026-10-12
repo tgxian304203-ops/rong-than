@@ -1,7 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Xử lý tệp đính kèm với multer. Log chi tiết upload.
-// Sửa: khi user chỉ gửi ảnh (không text) → vẫn nhận yêu cầu.
+// Xử lý tệp đính kèm với multer. Truyền mô tả ảnh cho BOSS.
 
 import express from "express";
 import multer from "multer";
@@ -47,10 +46,6 @@ import { LIMITS } from "../config/limits.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
 
 const router = express.Router();
-
-// ============================================================
-// MULTER
-// ============================================================
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -308,7 +303,10 @@ function buildBossPlanMessages({ userRequest, analysis, webContext }) {
   return [
     {
       role: "system",
-      content: "Bạn là BOSS — điều phối, không tự viết code dài.",
+      content:
+        "Bạn là BOSS — điều phối, không tự viết code dài. " +
+        "Khi trả về công thức toán, dùng ký hiệu chữ thường " +
+        "(ví dụ: 50 * a = 500, a = 10). KHÔNG dùng dấu $$ hay LaTeX.",
     },
     { role: "user", content: lines.join("\n") },
   ];
@@ -342,13 +340,18 @@ function buildSoldierMessages({ userRequest, format, webContext }) {
     "Yêu cầu gốc của User:",
     userRequest,
     "",
-    "Hãy trả về kết quả đầy đủ. Nếu là code, đặt trong ```<lang>...```."
+    "Hãy trả về kết quả đầy đủ. Nếu là code, đặt trong ```<lang>...```.",
+    "",
+    "Khi trình bày công thức toán: dùng chữ thường (ví dụ: 50 * a = 500, a = 10).",
+    "KHÔNG dùng dấu $$ hoặc LaTeX."
   );
 
   return [
     {
       role: "system",
-      content: "Bạn là lính. Trả về kết quả trực tiếp cho BOSS.",
+      content:
+        "Bạn là lính. Trả về kết quả trực tiếp cho BOSS. " +
+        "Không dùng LaTeX hay dấu $$.",
     },
     { role: "user", content: lines.join("\n") },
   ];
@@ -436,8 +439,6 @@ router.post(
         return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
       }
 
-      // ⚡ Nếu user chỉ gửi ảnh không text → đặt text mặc định
-      // để gwNhanYeuCau chấp nhận.
       if (!text && files.length > 0) {
         text = "[Ảnh đính kèm]";
       }
@@ -506,11 +507,22 @@ router.post(
         }
       }
 
-      // 2. Chuyển cho BOSS
+      // 2. Chuyển cho BOSS — KÈM mô tả tệp
+      let bossUserRequest = String(text || "");
+      if (savedAttachments.length > 0) {
+        const attachDesc = savedAttachments
+          .map(
+            (a, i) =>
+              `[${i + 1}] ${a.name} — ${a.type} — ${a.size} bytes`
+          )
+          .join("\n");
+        bossUserRequest = `${bossUserRequest}\n\n[Tệp đính kèm: ${savedAttachments.length}]\n${attachDesc}`;
+      }
+
       const bossResult = await chuyenYeuCauChoBoss({
         userId,
         conversationId,
-        userRequest: String(text || ""),
+        userRequest: bossUserRequest,
         userLabel: null,
         runBoss: runBossPipeline,
       });
