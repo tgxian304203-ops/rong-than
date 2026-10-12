@@ -1,5 +1,5 @@
 // src/store/chatStore.js
-// Nhiệm vụ: Quản lý hội thoại và tin nhắn
+// Nhiệm vụ: Quản lý hội thoại và tin nhắn.
 // - Hội thoại đang mở
 // - Danh sách tin nhắn
 // - Gửi tin nhắn (kèm tệp đính kèm)
@@ -27,23 +27,28 @@ export function ChatProvider({ children }) {
 
   // ============================================================
   // TẠO HỘI THOẠI MỚI
+  // Lấy đúng id — backend trả _id (MongoDB), không phải id
   // ============================================================
-  const createConversation = useCallback(async ({ projectId = null, title = null } = {}) => {
-    setError(null);
-    try {
-      const res = await chatApi.createConversation({ projectId, title });
-      const convo = res?.conversation;
-      if (convo?.id) {
-        setActiveConversationId(convo.id);
-        setMessages([]);
+  const createConversation = useCallback(
+    async ({ projectId = null, title = null } = {}) => {
+      setError(null);
+      try {
+        const res = await chatApi.createConversation({ projectId, title });
+        const convo = res?.conversation;
+        const convoId = convo?.id || convo?._id;
+        if (convoId) {
+          setActiveConversationId(convoId);
+          setMessages([]);
+        }
+        return { ok: true, conversation: convo };
+      } catch (err) {
+        const msg = err?.message || "Không tạo được cuộc trò chuyện";
+        setError(msg);
+        return { ok: false, error: msg };
       }
-      return { ok: true, conversation: convo };
-    } catch (err) {
-      const msg = err?.message || "Không tạo được cuộc trò chuyện";
-      setError(msg);
-      return { ok: false, error: msg };
-    }
-  }, []);
+    },
+    []
+  );
 
   // ============================================================
   // MỞ HỘI THOẠI
@@ -64,21 +69,39 @@ export function ChatProvider({ children }) {
 
   // ============================================================
   // GỬI TIN NHẮN
+  // Lấy conversationId trực tiếp từ kết quả tạo hội thoại,
+  // KHÔNG dùng activeConversationId từ state (vì có thể null).
   // ============================================================
   const sendMessage = useCallback(
     async ({ text, attachments }) => {
-      if (!activeConversationId) {
-        const created = await createConversation({});
-        if (!created.ok) return created;
-      }
-
       setSending(true);
       setError(null);
 
+      // ===== BƯỚC 1: Đảm bảo có conversationId =====
+      let conversationId = activeConversationId;
+
+      if (!conversationId) {
+        const created = await createConversation({});
+        if (!created.ok) {
+          setSending(false);
+          return {
+            ok: false,
+            error: created.error || "Không tạo được hội thoại",
+          };
+        }
+        conversationId =
+          created.conversation?.id || created.conversation?._id;
+        if (!conversationId) {
+          setSending(false);
+          return { ok: false, error: "Hội thoại mới không có id" };
+        }
+      }
+
+      // ===== BƯỚC 2: Chuẩn bị abort controller =====
       const controller = new AbortController();
       setAbortController(controller);
 
-      // Thêm tin nhắn User tạm thời vào UI ngay
+      // ===== BƯỚC 3: Thêm tin nhắn User tạm thời =====
       const tempUserMsg = {
         id: `temp-user-${Date.now()}`,
         role: "user",
@@ -91,7 +114,7 @@ export function ChatProvider({ children }) {
 
       try {
         const res = await chatApi.sendMessage({
-          conversationId: activeConversationId,
+          conversationId,
           text,
           attachments,
           signal: controller.signal,
@@ -106,12 +129,18 @@ export function ChatProvider({ children }) {
           return next;
         });
 
-        return { ok: true, userMessage: res?.userMessage, aiMessage: res?.aiMessage };
+        return {
+          ok: true,
+          userMessage: res?.userMessage,
+          aiMessage: res?.aiMessage,
+        };
       } catch (err) {
         // Đánh dấu tin nhắn tạm là lỗi
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === tempUserMsg.id ? { ...m, pending: false, failed: true } : m
+            m.id === tempUserMsg.id
+              ? { ...m, pending: false, failed: true }
+              : m
           )
         );
         const msg = err?.message || "Gửi tin nhắn thất bại";
@@ -137,7 +166,7 @@ export function ChatProvider({ children }) {
   }, [abortController]);
 
   // ============================================================
-  // LỊCH SỬ GẦN ĐÂY (tối đa 10 hiển thị)
+  // LỊCH SỬ GẦN ĐÂY
   // ============================================================
   const loadRecentConversations = useCallback(async () => {
     setError(null);
@@ -218,7 +247,9 @@ export function ChatProvider({ children }) {
     ]
   );
 
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+  );
 }
 
 export function useChat() {
