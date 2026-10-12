@@ -1,6 +1,7 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
 // Xử lý tệp đính kèm với multer. Log chi tiết upload.
+// Sửa: khi user chỉ gửi ảnh (không text) → vẫn nhận yêu cầu.
 
 import express from "express";
 import multer from "multer";
@@ -389,7 +390,6 @@ router.post(
   (req, res, next) => {
     upload.array("attachments", 10)(req, res, (err) => {
       if (err) {
-        // Log lỗi multer
         logWarn("Multer upload lỗi", {
           error: err?.message || String(err),
           code: err?.code || "",
@@ -407,7 +407,6 @@ router.post(
       const userId = getUserId(req);
       const files = Array.isArray(req.files) ? req.files : [];
 
-      // LOG NGAY ĐẦU — để chắc chắn request đã tới
       await logInfo("Nhận /chat/send", {
         userId,
         hasUserHeader: !!userId,
@@ -425,7 +424,7 @@ router.post(
       }
 
       const conversationId = req.body?.conversationId;
-      const text = req.body?.text || "";
+      let text = String(req.body?.text || "").trim();
 
       if (!conversationId) {
         return res
@@ -433,8 +432,14 @@ router.post(
           .json({ ok: false, message: "Thiếu conversationId" });
       }
 
-      if (!String(text).trim() && files.length === 0) {
+      if (!text && files.length === 0) {
         return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
+      }
+
+      // ⚡ Nếu user chỉ gửi ảnh không text → đặt text mặc định
+      // để gwNhanYeuCau chấp nhận.
+      if (!text && files.length > 0) {
+        text = "[Ảnh đính kèm]";
       }
 
       // 1. Nhận yêu cầu
@@ -445,6 +450,7 @@ router.post(
         attachments: [],
       });
       if (!recv.ok) {
+        await logWarn("gwNhanYeuCau thất bại", { error: recv.error });
         return res.status(400).json({ ok: false, message: recv.error });
       }
 
