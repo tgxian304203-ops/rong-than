@@ -1,11 +1,5 @@
 // server/sandbox/chay-kiem-thu.js
-// Nhiệm vụ: Chạy bài kiểm thử code.
-//
-// Quy tắc dự án:
-//   - BOSS kiểm tra chạy thử trên Sandbox.
-//   - Đúng → trả kết quả cho Rồng Thần.
-//   - Sai → BOSS đưa cách khắc phục và viết format cho lính sửa.
-//   - Lặp lại cho tới khi đúng mới thôi.
+// Nhiệm vụ: Chạy bài kiểm thử code qua Piston.
 
 import { createRun, finishRun } from "../db/sandboxRuns.js";
 import { saveTestResult } from "../db/testResults.js";
@@ -13,7 +7,6 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 import {
   buildPayload,
   sendToSandbox,
-  hasSandboxEndpoint,
 } from "./cau-noi-livecodes.js";
 import { SANDBOX_STATUS, readResult } from "./doc-ket-qua.js";
 import {
@@ -48,21 +41,6 @@ export async function chayKiemThu({
   stdin = "",
   signal,
 }) {
-  // ===== Kiểm tra endpoint =====
-  if (!hasSandboxEndpoint()) {
-    const error =
-      "Chưa cấu hình SANDBOX_ENDPOINT. Backend không chạy được Sandbox.";
-    await logWarn(error, { conversationId });
-    return {
-      ok: false,
-      status: SANDBOX_STATUS.ERROR,
-      stdout: "",
-      stderr: "",
-      durationMs: 0,
-      error,
-    };
-  }
-
   // ===== Kiểm tra kích thước =====
   const sizeCheck = checkCodeSize(code, false);
   if (!sizeCheck.ok) {
@@ -114,7 +92,7 @@ export async function chayKiemThu({
   enterRun();
 
   try {
-    await logInfo("Sandbox: bắt đầu chạy", {
+    await logInfo("Sandbox: bắt đầu chạy (Piston)", {
       runId,
       conversationId,
       language,
@@ -134,7 +112,6 @@ export async function chayKiemThu({
       stderr,
     });
 
-    // Cập nhật bản ghi run
     await finishRun(runId, {
       status: result.status,
       stdout,
@@ -142,7 +119,6 @@ export async function chayKiemThu({
       durationMs,
     });
 
-    // Lưu test result chi tiết
     try {
       await saveTestResult({
         runId,
@@ -156,7 +132,7 @@ export async function chayKiemThu({
         message: stderr || (result.isPass ? "OK" : ""),
       });
     } catch {
-      /* bỏ qua nếu lỗi lưu test */
+      /* bỏ qua */
     }
 
     await logInfo("Sandbox: kết thúc", {

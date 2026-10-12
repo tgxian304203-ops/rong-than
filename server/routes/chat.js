@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Hỗ trợ resume: nút "Sửa tiếp" → tiếp tục từ code mới nhất.
+// BOSS tự kiểm tra Sandbox qua Piston. Nút "Sửa tiếp" để resume.
 
 import express from "express";
 import multer from "multer";
@@ -237,65 +237,53 @@ async function runBossPipeline({
     const initialCode = extractCodeBlock(finalText, language);
 
     if (initialCode) {
-      const sandboxConfigured = !!process.env.SANDBOX_ENDPOINT;
+      // Piston luôn có — không cần kiểm tra SANDBOX_ENDPOINT
+      const loop = await vongLapSua({
+        userId,
+        conversationId,
+        bossSessionId,
+        language,
+        initialCode,
+        goal: userRequest,
+        signal,
+      });
 
-      if (sandboxConfigured) {
-        const loop = await vongLapSua({
+      sandboxMeta = loop.lastRun
+        ? {
+            status: loop.lastRun.status,
+            runId: loop.lastRun.runId,
+            attempts: loop.attempts,
+          }
+        : null;
+
+      // Lưu phiên bản code cuối cùng để resume
+      try {
+        const saved = await saveArtifact({
           userId,
           conversationId,
-          bossSessionId,
           language,
-          initialCode,
-          goal: userRequest,
-          signal,
+          code: loop.finalCode || initialCode,
+          version: (loop.version || 1) + 1,
         });
+        codeMeta = {
+          language,
+          version: saved.version,
+          artifactId: String(saved._id),
+        };
+      } catch {
+        /* bỏ qua */
+      }
 
-        sandboxMeta = loop.lastRun
-          ? {
-              status: loop.lastRun.status,
-              runId: loop.lastRun.runId,
-              attempts: loop.attempts,
-            }
-          : null;
-
-        // Lưu phiên bản code cuối vào codeArtifacts để resume
-        try {
-          const saved = await saveArtifact({
-            userId,
-            conversationId,
-            language,
-            code: loop.finalCode || initialCode,
-            version: (loop.version || 1) + 1,
-          });
-          codeMeta = {
-            language,
-            version: saved.version,
-            artifactId: String(saved._id),
-          };
-        } catch {
-          /* bỏ qua */
-        }
-
-        if (loop.ok) {
-          finalText = `Đã hoàn thành. Code đã vượt qua kiểm thử Sandbox (v${
-            loop.version || 1
-          }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
-          resumeAvailable = false;
-        } else {
-          finalText = `Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
-            loop.lastRun?.stderr || "(không rõ)"
-          }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
-          resumeAvailable = true;
-        }
+      if (loop.ok) {
+        finalText = `✅ Code đã vượt qua kiểm thử Sandbox (v${
+          loop.version || 1
+        }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+        resumeAvailable = false;
       } else {
-        await logInfo(
-          "BOSS: Sandbox chưa cấu hình — bỏ qua kiểm thử",
-          { userId, conversationId }
-        );
-
-        finalText = `Đã tạo code (chưa kiểm thử Sandbox).\n\n\`\`\`${language}\n${initialCode}\n\`\`\``;
-        sandboxMeta = { status: "skipped" };
-        codeMeta = { language, version: 1 };
+        finalText = `⚠ Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
+          loop.lastRun?.stderr || "(không rõ)"
+        }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
+        resumeAvailable = true;
       }
     }
   }
@@ -319,11 +307,7 @@ async function runBossPipeline({
 // PIPELINE BOSS — RESUME (SỬA TIẾP)
 // ============================================================
 
-async function runBossResume({
-  userId,
-  conversationId,
-  signal,
-}) {
+async function runBossResume({ userId, conversationId, signal }) {
   await logInfo("BOSS: BẮT ĐẦU RESUME (Sửa tiếp)", {
     userId,
     conversationId,
@@ -333,7 +317,7 @@ async function runBossResume({
   const workState = await loadWorkState(userId, conversationId);
   const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
 
-  // 2. Đọc code mới nhất từ codeArtifacts
+  // 2. Đọc code mới nhất
   const latest = await getLatestCodeArtifact(conversationId);
   if (!latest || !latest.code) {
     await logWarn("BOSS: Resume thất bại — không có code cũ", {
@@ -364,14 +348,6 @@ async function runBossResume({
   const bossSessionId = null;
 
   // 4. Chạy vòng lặp sửa từ code hiện tại
-  const sandboxConfigured = !!process.env.SANDBOX_ENDPOINT;
-  if (!sandboxConfigured) {
-    return {
-      ok: false,
-      error: "Sandbox chưa cấu hình — không thể sửa tiếp.",
-    };
-  }
-
   const loop = await vongLapSua({
     userId,
     conversationId,
@@ -721,7 +697,7 @@ router.post("/fix-continue", async (req, res) => {
       conversationId,
     });
 
-    // Lưu tin nhắn user "[Sửa tiếp]" để có lịch sử
+    // Lưu tin nhắn user "[Sửa tiếp]"
     try {
       await gwNhanYeuCau({
         userId,

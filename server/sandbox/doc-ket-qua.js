@@ -1,11 +1,6 @@
 // server/sandbox/doc-ket-qua.js
 // Nhiệm vụ: Đọc kết quả Sandbox và phân loại.
-// Trạng thái theo PHẦN 07 (shared/constants/sandboxStatus.js):
-//   "idle" | "running" | "passed" | "failed" | "error"
-
-// ============================================================
-// TRẠNG THÁI CHUẨN
-// ============================================================
+// Trạng thái: "idle" | "running" | "passed" | "failed" | "error"
 
 export const SANDBOX_STATUS = {
   IDLE: "idle",
@@ -15,14 +10,6 @@ export const SANDBOX_STATUS = {
   ERROR: "error",
 };
 
-// ============================================================
-// PHÂN LOẠI KẾT QUẢ
-// ============================================================
-
-/**
- * @param {object} raw  - kết quả thô từ sendToSandbox
- * @returns {{status: string, stdout: string, stderr: string, isPass: boolean}}
- */
 export function readResult(raw) {
   if (!raw) {
     return {
@@ -36,7 +23,7 @@ export function readResult(raw) {
   const stdout = String(raw.stdout || "");
   const stderr = String(raw.stderr || "");
 
-  // Nếu có stderr → failed (trừ khi backend nói rõ là passed)
+  // Nếu có stderr → failed
   if (raw.status === "passed" && !stderr) {
     return {
       status: SANDBOX_STATUS.PASSED,
@@ -64,7 +51,6 @@ export function readResult(raw) {
     };
   }
 
-  // Mặc định: nếu không có stderr → coi là passed
   return {
     status: stdout || raw.ok ? SANDBOX_STATUS.PASSED : SANDBOX_STATUS.ERROR,
     stdout,
@@ -72,10 +58,6 @@ export function readResult(raw) {
     isPass: !stderr && !!raw.ok,
   };
 }
-
-// ============================================================
-// KIỂM TRA
-// ============================================================
 
 export function isPass(result) {
   return result?.status === SANDBOX_STATUS.PASSED;
