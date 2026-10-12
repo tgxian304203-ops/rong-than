@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Khi lính thất bại → vòng lặp sửa với ngữ cảnh từ lỗi.
+// Sửa extractCodeBlock + guessLanguage: ưu tiên block code THẬT, bỏ qua cấu trúc thư mục.
 
 import express from "express";
 import multer from "multer";
@@ -202,7 +202,6 @@ async function runBossPipeline({
     webContext,
   });
 
-  // Gọi lính — truyền candidates
   const linh = await goiLinh({
     userId,
     taskId: giao.taskId,
@@ -216,7 +215,6 @@ async function runBossPipeline({
   });
 
   if (!linh.ok) {
-    // Tất cả lính thất bại → trả về thông báo + lỗi
     return {
       ok: false,
       error: linh.error || "Lính không hoàn thành",
@@ -245,6 +243,14 @@ async function runBossPipeline({
   if (danhGia.needSandbox) {
     const language = guessLanguage(finalText);
     const initialCode = extractCodeBlock(finalText, language);
+
+    await logInfo("BOSS: chuẩn bị chạy Sandbox", {
+      userId,
+      conversationId,
+      language,
+      codeLength: initialCode.length,
+      codePreview: initialCode.slice(0, 100),
+    });
 
     if (initialCode) {
       const loop = await vongLapSua({
@@ -293,6 +299,11 @@ async function runBossPipeline({
         }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
         resumeAvailable = true;
       }
+    } else {
+      await logWarn("BOSS: không tìm thấy code block để Sandbox", {
+        userId,
+        conversationId,
+      });
     }
   }
 
@@ -488,30 +499,105 @@ function buildSoldierMessages({ userRequest, format, webContext }) {
   ];
 }
 
+// ============================================================
+// ĐOÁN NGÔN NGỮ — ƯU TIÊN HTML/JS/PYTHON THẬT
+// ============================================================
+
 function guessLanguage(text) {
-  if (typeof text !== "string") return "javascript";
-  const m = text.match(/```([a-zA-Z0-9+\-#.]+)/);
-  if (m && m[1]) {
-    const l = m[1].toLowerCase();
-    if (l.includes("python") || l === "py") return "python";
-    if (l.includes("typescript") || l === "ts") return "typescript";
-    if (l.includes("javascript") || l === "js") return "javascript";
-    return l;
+  if (typeof text !== "string") return "html";
+
+  const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
+  let match;
+  let best = "html";
+  let bestScore = -1;
+
+  while ((match = re.exec(text)) !== null) {
+    const lang = (match[1] || "").toLowerCase().trim();
+    const body = match[2] || "";
+    let score = 0;
+
+    // Ưu tiên ngôn ngữ cụ thể
+    if (lang === "html" || lang === "htm") score += 100;
+    else if (lang === "javascript" || lang === "js") score += 80;
+    else if (lang === "python" || lang === "py") score += 80;
+    else if (lang === "typescript" || lang === "ts") score += 60;
+    else if (lang === "css") score += 40;
+    else if (lang) score += 10;
+    else score += 0;
+
+    // Block chứa code thật
+    if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
+    if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
+    if (/def\s|import\s|class\s/i.test(body)) score += 100;
+    if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
+
+    // Block cấu trúc thư mục → trừ điểm
+    if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
+    if (
+      /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&
+      !/<html/i.test(body)
+    )
+      score -= 200;
+
+    if (score > bestScore) {
+      bestScore = score;
+      if (lang === "html" || lang === "htm") best = "html";
+      else if (lang === "javascript" || lang === "js") best = "javascript";
+      else if (lang === "python" || lang === "py") best = "python";
+      else if (lang === "typescript" || lang === "ts") best = "typescript";
+      else if (lang === "css") best = "css";
+      else best = "html";
+    }
   }
-  return "javascript";
+
+  return best;
 }
+
+// ============================================================
+// LẤY CODE BLOCK — ƯU TIÊN BLOCK CODE THẬT
+// ============================================================
 
 function extractCodeBlock(text, language = "") {
   if (typeof text !== "string") return "";
+
   const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
   let match;
   let best = "";
+  let bestScore = -1;
+
   while ((match = re.exec(text)) !== null) {
-    const lang = (match[1] || "").toLowerCase();
+    const lang = (match[1] || "").toLowerCase().trim();
     const body = match[2] || "";
-    if (language && lang && lang.includes(language)) return body.trim();
-    if (!best) best = body;
+    let score = 0;
+
+    // Khớp language mong muốn
+    if (language && lang.includes(language)) score += 100;
+
+    // Block có language cụ thể
+    if (lang === "html" || lang === "htm") score += 50;
+    if (lang === "javascript" || lang === "js") score += 40;
+    if (lang === "python" || lang === "py") score += 40;
+
+    // Block có code thật
+    if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
+    if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
+    if (/def\s|import\s|class\s/i.test(body)) score += 100;
+    if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
+
+    // Block cấu trúc thư mục → trừ điểm nặng
+    if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
+    if (
+      /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&
+      !/<html/i.test(body)
+    )
+      score -= 200;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = body;
+    }
   }
+
   return best.trim();
 }
 
