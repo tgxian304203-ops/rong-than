@@ -5,11 +5,10 @@
 //   - Trạng thái server: chỉ hiển thị khi backend cung cấp
 //   - Ô tìm kiếm log
 //   - Bộ lọc mức: Tất cả / INFO / WARN / ERROR / DEBUG
-//   - Danh sách log (cuộn)
+//   - Danh sách log (cuộn) — log cũ trên, mới dưới
 //   - Tự động cuộn: BẬT/TẮT
-//   - Nút Xóa Logs (KHÔNG icon thùng rác, phải xác nhận)
+//   - Nút Xóa Logs (không icon thùng rác, phải xác nhận)
 //   - Nút ⬇ Tải Logs (.txt)
-//   - KHÔNG coi dữ liệu minh họa là log thật
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -32,12 +31,23 @@ export default function Logs() {
   const [level, setLevel] = useState("all");
   const [search, setSearch] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
-  const [serverStatus, setServerStatus] = useState("unknown"); // "online" | "offline" | "unknown"
+  const [serverStatus, setServerStatus] = useState("unknown");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const scrollRef = useRef(null);
   const searchDebounceRef = useRef(null);
+
+  // ============================================================
+  // SẮP XẾP — CŨ TRÊN, MỚI DƯỚI
+  // ============================================================
+  const sortAsc = (list) => {
+    return [...list].sort((a, b) => {
+      const ta = new Date(a.timestamp || 0).getTime();
+      const tb = new Date(b.timestamp || 0).getTime();
+      return ta - tb;
+    });
+  };
 
   // ============================================================
   // TẢI LOGS
@@ -53,7 +63,7 @@ export default function Logs() {
           limit: 300,
           ...opts,
         });
-        setItems(res?.items || []);
+        setItems(sortAsc(res?.items || []));
         if (res?.serverStatus) setServerStatus(res.serverStatus);
       } catch (err) {
         setError(err?.message || "Không tải được log");
@@ -66,7 +76,7 @@ export default function Logs() {
   );
 
   // ============================================================
-  // TẢI TRẠNG THÁI SERVER + LOGS LẦN ĐẦU
+  // TẢI LẦN ĐẦU
   // ============================================================
   useEffect(() => {
     let cancelled = false;
@@ -113,24 +123,24 @@ export default function Logs() {
   }, [search]);
 
   // ============================================================
-  // SSE — nhận log mới (nếu backend hỗ trợ)
+  // SSE — nhận log mới
   // ============================================================
   useEffect(() => {
     const cancel = streamLogs(
       (item) => {
         if (!item) return;
         if (level !== "all" && item.level !== level) return;
-        setItems((prev) => [...prev, item]);
+        setItems((prev) => sortAsc([...prev, item]));
       },
       () => {
-        // Không có SSE — bỏ qua, không báo lỗi người dùng
+        /* không có SSE — bỏ qua */
       }
     );
     return () => cancel && cancel();
   }, [level]);
 
   // ============================================================
-  // TỰ ĐỘNG CUỘN
+  // TỰ ĐỘNG CUỘN — XUỐNG CUỐI KHI CÓ LOG MỚI
   // ============================================================
   useEffect(() => {
     if (!autoScroll) return;
@@ -184,7 +194,7 @@ export default function Logs() {
   };
 
   // ============================================================
-  // HIỂN THỊ TRẠNG THÁI SERVER
+  // TRẠNG THÁI SERVER
   // ============================================================
   const statusInfo = (() => {
     switch (serverStatus) {
@@ -267,11 +277,11 @@ export default function Logs() {
         </div>
 
         {/* BỘ LỌC MỨC */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center" }}>
           <LogFilter value={level} onChange={setLevel} />
         </div>
 
-        {/* DANH SÁCH LOG */}
+        {/* DANH SÁCH LOG — CUỘN XUỐNG CUỐI */}
         <div
           ref={scrollRef}
           className="scroll-y"
@@ -317,7 +327,9 @@ export default function Logs() {
             style={{
               minHeight: 36,
               padding: "0 var(--space-3)",
-              color: autoScroll ? "var(--color-success)" : "var(--color-text-muted)",
+              color: autoScroll
+                ? "var(--color-success)"
+                : "var(--color-text-muted)",
               fontSize: "var(--font-sm)",
               fontWeight: 700,
               borderRadius: "var(--radius-md)",
