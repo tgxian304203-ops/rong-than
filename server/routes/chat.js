@@ -51,8 +51,6 @@ const router = express.Router();
 // MULTER
 // ============================================================
 
-// Ảnh base64 lưu MongoDB không được vượt 16MB.
-// Giới hạn ảnh: 5MB (an toàn cho base64).
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const upload = multer({
@@ -280,10 +278,6 @@ async function runBossPipeline({
   };
 }
 
-// ============================================================
-// XÂY MESSAGES
-// ============================================================
-
 function buildBossPlanMessages({ userRequest, analysis, webContext }) {
   const lines = [
     "Bạn là BOSS của Rồng Thần.",
@@ -390,154 +384,170 @@ function extractCodeBlock(text, language = "") {
 // ROUTE — GỬI TIN NHẮN
 // ============================================================
 
-router.post("/send", (req, res, next) => {
-  upload.array("attachments", 10)(req, res, (err) => {
-    if (err) {
-      logWarn("Multer upload lỗi", { error: err?.message || String(err) });
-      return res.status(400).json({
-        ok: false,
-        message: err?.message || "Lỗi upload tệp đính kèm",
+router.post(
+  "/send",
+  (req, res, next) => {
+    upload.array("attachments", 10)(req, res, (err) => {
+      if (err) {
+        // Log lỗi multer
+        logWarn("Multer upload lỗi", {
+          error: err?.message || String(err),
+          code: err?.code || "",
+        });
+        return res.status(400).json({
+          ok: false,
+          message: err?.message || "Lỗi upload tệp đính kèm",
+        });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const files = Array.isArray(req.files) ? req.files : [];
+
+      // LOG NGAY ĐẦU — để chắc chắn request đã tới
+      await logInfo("Nhận /chat/send", {
+        userId,
+        hasUserHeader: !!userId,
+        bodyKeys: Object.keys(req.body || {}),
+        filesCount: files.length,
+        fileNames: files.map((f) => ({
+          name: f.originalname,
+          size: f.size,
+          mime: f.mimetype,
+        })),
       });
-    }
-    next();
-  });
-}, async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) {
-      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    }
 
-    const conversationId = req.body?.conversationId;
-    const text = req.body?.text || "";
-    const files = Array.isArray(req.files) ? req.files : [];
+      if (!userId) {
+        return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+      }
 
-    await logInfo("Nhận /chat/send", {
-      userId,
-      conversationId,
-      hasText: !!String(text).trim(),
-      filesCount: files.length,
-      fileNames: files.map((f) => `${f.originalname} (${f.size}b, ${f.mimetype})`),
-    });
+      const conversationId = req.body?.conversationId;
+      const text = req.body?.text || "";
 
-    if (!conversationId) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Thiếu conversationId" });
-    }
+      if (!conversationId) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Thiếu conversationId" });
+      }
 
-    if (!String(text).trim() && files.length === 0) {
-      return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
-    }
+      if (!String(text).trim() && files.length === 0) {
+        return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
+      }
 
-    // 1. Nhận yêu cầu
-    const recv = await gwNhanYeuCau({
-      userId,
-      conversationId,
-      text,
-      attachments: [],
-    });
-    if (!recv.ok) {
-      return res.status(400).json({ ok: false, message: recv.error });
-    }
+      // 1. Nhận yêu cầu
+      const recv = await gwNhanYeuCau({
+        userId,
+        conversationId,
+        text,
+        attachments: [],
+      });
+      if (!recv.ok) {
+        return res.status(400).json({ ok: false, message: recv.error });
+      }
 
-    // 1b. Lưu tệp đính kèm
-    const savedAttachments = [];
-    if (files.length > 0 && recv.userMessage?._id) {
-      for (const f of files) {
-        try {
-          const isImage = String(f.mimetype || "").startsWith("image/");
-          const tooBig = isImage && f.size > MAX_IMAGE_BYTES;
+      // 1b. Lưu tệp đính kèm
+      const savedAttachments = [];
+      if (files.length > 0 && recv.userMessage?._id) {
+        for (const f of files) {
+          try {
+            const isImage = String(f.mimetype || "").startsWith("image/");
+            const tooBig = isImage && f.size > MAX_IMAGE_BYTES;
 
-          let dataUrl = "";
-          if (isImage && !tooBig) {
-            dataUrl = `data:${f.mimetype};base64,${f.buffer.toString("base64")}`;
+            let dataUrl = "";
+            if (isImage && !tooBig) {
+              dataUrl = `data:${f.mimetype};base64,${f.buffer.toString(
+                "base64"
+              )}`;
+            }
+
+            const att = await saveAttachment({
+              userId,
+              conversationId,
+              messageId: String(recv.userMessage._id),
+              name: f.originalname || "tệp",
+              type: f.mimetype || "application/octet-stream",
+              size: f.size || 0,
+              url: "",
+              dataUrl,
+            });
+
+            savedAttachments.push({
+              id: String(att._id),
+              name: att.name,
+              type: att.type,
+              size: att.size,
+              url: "",
+              dataUrl: att.dataUrl || "",
+            });
+
+            await logInfo("Đã lưu tệp đính kèm", {
+              userId,
+              name: f.originalname,
+              isImage,
+              tooBig,
+              size: f.size,
+              dataUrlLength: dataUrl.length,
+            });
+          } catch (e) {
+            await logWarn("Không lưu được tệp đính kèm", {
+              name: f?.originalname,
+              error: e?.message || String(e),
+            });
           }
-
-          const att = await saveAttachment({
-            userId,
-            conversationId,
-            messageId: String(recv.userMessage._id),
-            name: f.originalname || "tệp",
-            type: f.mimetype || "application/octet-stream",
-            size: f.size || 0,
-            url: "",
-            dataUrl,
-          });
-
-          savedAttachments.push({
-            id: String(att._id),
-            name: att.name,
-            type: att.type,
-            size: att.size,
-            url: "",
-            dataUrl: att.dataUrl || "",
-          });
-
-          await logInfo("Đã lưu tệp đính kèm", {
-            userId,
-            name: f.originalname,
-            isImage,
-            tooBig,
-            size: f.size,
-            dataUrlLength: dataUrl.length,
-          });
-        } catch (e) {
-          await logWarn("Không lưu được tệp đính kèm", {
-            name: f?.originalname,
-            error: e?.message || String(e),
-          });
         }
       }
+
+      // 2. Chuyển cho BOSS
+      const bossResult = await chuyenYeuCauChoBoss({
+        userId,
+        conversationId,
+        userRequest: String(text || ""),
+        userLabel: null,
+        runBoss: runBossPipeline,
+      });
+
+      // 3. Nhận kết quả
+      const received = await nhanKetQuaTuBoss({
+        userId,
+        conversationId,
+        bossResult,
+      });
+      if (!received.ok) {
+        return res.status(500).json({ ok: false, message: received.error });
+      }
+
+      // 4. Trả cho User
+      const delivered = await traKetQuaChoUser({
+        userId,
+        conversationId,
+        text: received.text,
+        meta: received.meta,
+      });
+      if (!delivered.ok) {
+        return res.status(500).json({ ok: false, message: delivered.error });
+      }
+
+      return res.json({
+        ok: true,
+        userMessage: {
+          ...recv.userMessage,
+          id: String(recv.userMessage._id),
+          attachments: savedAttachments,
+        },
+        aiMessage: {
+          ...delivered.aiMessage,
+          id: String(delivered.aiMessage._id),
+        },
+      });
+    } catch (err) {
+      await logWarn("Lỗi /chat/send", { error: err?.message || String(err) });
+      return res.status(500).json({ ok: false, message: "Lỗi server" });
     }
-
-    // 2. Chuyển cho BOSS
-    const bossResult = await chuyenYeuCauChoBoss({
-      userId,
-      conversationId,
-      userRequest: String(text || ""),
-      userLabel: null,
-      runBoss: runBossPipeline,
-    });
-
-    // 3. Nhận kết quả
-    const received = await nhanKetQuaTuBoss({
-      userId,
-      conversationId,
-      bossResult,
-    });
-    if (!received.ok) {
-      return res.status(500).json({ ok: false, message: received.error });
-    }
-
-    // 4. Trả cho User
-    const delivered = await traKetQuaChoUser({
-      userId,
-      conversationId,
-      text: received.text,
-      meta: received.meta,
-    });
-    if (!delivered.ok) {
-      return res.status(500).json({ ok: false, message: delivered.error });
-    }
-
-    return res.json({
-      ok: true,
-      userMessage: {
-        ...recv.userMessage,
-        id: String(recv.userMessage._id),
-        attachments: savedAttachments,
-      },
-      aiMessage: {
-        ...delivered.aiMessage,
-        id: String(delivered.aiMessage._id),
-      },
-    });
-  } catch (err) {
-    await logWarn("Lỗi /chat/send", { error: err?.message || String(err) });
-    return res.status(500).json({ ok: false, message: "Lỗi server" });
   }
-});
+);
 
 // ============================================================
 // ROUTE — TẠO HỘI THOẠI
