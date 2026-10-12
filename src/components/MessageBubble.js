@@ -1,13 +1,11 @@
 // src/components/MessageBubble.js
 // Nhiệm vụ: Khung tin nhắn AI hoặc User.
-// Quy tắc dự án:
-//   - AI: nhãn 🔥🐉 Rồng Thần, căn trái, chữ xanh lá, nền trong suốt ~50%
-//   - User: nhãn 👾 User, căn phải, chữ trắng, nền trong suốt ~50%
-//   - Nội dung dài tự xuống dòng
-//   - Hiển thị tệp đính kèm: ảnh hiện hình, tệp hiện tên
-//   - Ảnh có thể bấm vào để xem full-size
+// - AI: nhãn 🔥🐉 Rồng Thần, căn trái, chữ xanh lá
+// - User: nhãn 👾 User, căn phải, chữ trắng
+// - Tự tách code block ``` để hiển thị riêng
+// - Ảnh có thể bấm vào để xem full-size
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { formatTime, getFileIcon, formatFileSize } from "../utils/format.js";
 import { isImageFile } from "../utils/validate.js";
 
@@ -23,6 +21,9 @@ export default function MessageBubble({ message }) {
     : [];
 
   const [lightboxSrc, setLightboxSrc] = useState(null);
+
+  // Tách text và code blocks
+  const parts = splitTextAndCode(message.text || "");
 
   return (
     <>
@@ -67,7 +68,7 @@ export default function MessageBubble({ message }) {
             isAI ? "glass-bubble-ai" : "glass-bubble-user"
           }`}
           style={{
-            maxWidth: "88%",
+            maxWidth: "92%",
             minWidth: 40,
             position: "relative",
           }}
@@ -93,8 +94,28 @@ export default function MessageBubble({ message }) {
             </div>
           ) : null}
 
-          {/* NỘI DUNG */}
-          {message.text ? <div>{message.text}</div> : null}
+          {/* NỘI DUNG — TÁCH TEXT VÀ CODE */}
+          {parts.map((part, idx) => {
+            if (part.type === "code") {
+              return <CodeBlock key={idx} language={part.language} code={part.content} />;
+            }
+            if (part.type === "text") {
+              const trimmed = part.content;
+              if (!trimmed.trim()) return null;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {trimmed}
+                </div>
+              );
+            }
+            return null;
+          })}
 
           {/* TRẠNG THÁI GỬI */}
           {message.pending ? (
@@ -122,7 +143,7 @@ export default function MessageBubble({ message }) {
         </div>
       </div>
 
-      {/* LIGHTBOX XEM ẢNH FULL-SIZE */}
+      {/* LIGHTBOX ẢNH */}
       {lightboxSrc ? (
         <div
           role="dialog"
@@ -183,7 +204,132 @@ export default function MessageBubble({ message }) {
 }
 
 // ============================================================
-// XEM TRƯỚC TỆP ĐÍNH KÈM TRONG TIN NHẮN
+// TÁCH TEXT VÀ CODE BLOCK
+// ============================================================
+
+function splitTextAndCode(text) {
+  if (typeof text !== "string" || !text) return [];
+
+  const parts = [];
+  const re = /```([a-zA-Z0-9+\-#.]*)\n?([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = re.exec(text)) !== null) {
+    // Text trước code block
+    if (match.index > lastIndex) {
+      const textPart = text.slice(lastIndex, match.index);
+      if (textPart.trim()) {
+        parts.push({ type: "text", content: textPart });
+      }
+    }
+
+    // Code block
+    const language = (match[1] || "").trim();
+    const code = match[2] || "";
+    parts.push({ type: "code", language, content: code });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Text sau code block cuối
+  if (lastIndex < text.length) {
+    const textPart = text.slice(lastIndex);
+    if (textPart.trim()) {
+      parts.push({ type: "text", content: textPart });
+    }
+  }
+
+  // Không có code block nào
+  if (parts.length === 0) {
+    parts.push({ type: "text", content: text });
+  }
+
+  return parts;
+}
+
+// ============================================================
+// CODE BLOCK — hiển thị code có copy
+// ============================================================
+
+function CodeBlock({ language, code }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--space-2)",
+        marginBottom: "var(--space-2)",
+        borderRadius: "var(--radius-sm)",
+        overflow: "hidden",
+        border: "1px solid rgba(255,255,255,0.15)",
+        backgroundColor: "rgba(0,0,0,0.55)",
+      }}
+    >
+      {/* Thanh trên: ngôn ngữ + copy */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "4px 8px",
+          backgroundColor: "rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(255,255,255,0.1)",
+          fontSize: 11,
+        }}
+      >
+        <span style={{ color: "var(--color-text-muted)", textTransform: "uppercase" }}>
+          {language || "code"}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="no-select"
+          style={{
+            color: copied ? "var(--color-success)" : "var(--color-text-secondary)",
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "2px 8px",
+            borderRadius: 4,
+            backgroundColor: "rgba(255,255,255,0.08)",
+          }}
+        >
+          {copied ? "✓ Đã copy" : "Copy"}
+        </button>
+      </div>
+
+      {/* Code */}
+      <pre
+        style={{
+          margin: 0,
+          padding: "var(--space-3)",
+          overflowX: "auto",
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "#e6e6e6",
+          fontFamily:
+            'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+          whiteSpace: "pre",
+        }}
+      >
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+// ============================================================
+// XEM TRƯỚC TỆP ĐÍNH KÈM
 // ============================================================
 function AttachmentPreview({ attachment, isAI, onOpenImage }) {
   const url = attachment.url || null;
@@ -193,14 +339,10 @@ function AttachmentPreview({ attachment, isAI, onOpenImage }) {
     typeof attachment.size === "number" ? formatFileSize(attachment.size) : "";
 
   const type = attachment.type || "";
-  const isImage = type
-    ? isImageFile({ type, name })
-    : isImageFile({ name });
+  const isImage = type ? isImageFile({ type, name }) : isImageFile({ name });
 
-  // Ưu tiên url, fallback dataUrl
   const src = url || dataUrl || null;
 
-  // Ảnh có src → hiển thị hình, bấm để xem full
   if (isImage && src) {
     return (
       <div
@@ -233,8 +375,6 @@ function AttachmentPreview({ attachment, isAI, onOpenImage }) {
     );
   }
 
-  // Ảnh không có src → hiển thị chip tên file
-  // Tệp thường → hiển thị chip tên file
   return (
     <div
       style={{
