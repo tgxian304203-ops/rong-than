@@ -1,14 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-//
-// Quy tắc dự án (PHẦN 02, luồng 1-3):
-//   - User gửi yêu cầu.
-//   - Rồng Thần nhận → chuyển cho BOSS.
-//   - BOSS xử lý → trả kết quả cho Rồng Thần → trả cho User.
-//
-// Hỗ trợ tệp đính kèm: dùng multer (memoryStorage).
-// Khi trả messages — gắn kèm attachments (có dataUrl).
-// Pipeline BOSS nằm trong file này (theo đúng sơ đồ).
+// Xử lý tệp đính kèm với multer. Log chi tiết upload.
 
 import express from "express";
 import multer from "multer";
@@ -31,7 +23,6 @@ import { chuyenYeuCauChoBoss } from "../gateway/chuyen-yeu-cau-cho-boss.js";
 import { nhanKetQuaTuBoss } from "../gateway/nhan-ket-qua-tu-boss.js";
 import { traKetQuaChoUser } from "../gateway/tra-ket-qua-cho-user.js";
 
-// BOSS components
 import { nhanYeuCau as bossNhanYeuCau } from "../boss/nhan-yeu-cau.js";
 import { phanTichYeuCau } from "../boss/phan-tich-yeu-cau.js";
 import { traWeb, formatWebResults } from "../boss/tra-web.js";
@@ -41,7 +32,6 @@ import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
 import { danhGiaKetQua } from "../boss/danh-gia-ket-qua.js";
 import { vongLapSua } from "../boss/vong-lap-sua.js";
 
-// Đại Não
 import { chonBossTheoYeuCau } from "../dai-nao/chon-boss-theo-yeu-cau.js";
 import { goiBoss } from "../dai-nao/goi-boss.js";
 import { goiBossMoi } from "../dai-nao/goi-boss-moi.js";
@@ -50,7 +40,6 @@ import {
   buildHandoffPrompt,
 } from "../dai-nao/ban-giao-trang-thai.js";
 
-// Tiểu Não
 import { goiLinh } from "../tieu-nao/goi-linh.js";
 
 import { LIMITS } from "../config/limits.js";
@@ -59,8 +48,12 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 const router = express.Router();
 
 // ============================================================
-// MULTER — CHO TỆP ĐÍNH KÈM
+// MULTER
 // ============================================================
+
+// Ảnh base64 lưu MongoDB không được vượt 16MB.
+// Giới hạn ảnh: 5MB (an toàn cho base64).
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -79,9 +72,6 @@ function getUserId(req) {
   return v ? String(v) : null;
 }
 
-/**
- * Gắn attachments (kèm dataUrl) vào 1 message.
- */
 async function attachFilesToMessage(msg) {
   if (!msg) return msg;
   try {
@@ -115,7 +105,6 @@ async function runBossPipeline({
   userLabel,
   signal,
 }) {
-  // 1. BOSS nhận yêu cầu
   const recv = await bossNhanYeuCau({
     userId,
     conversationId,
@@ -124,7 +113,6 @@ async function runBossPipeline({
   });
   if (!recv.ok) return { ok: false, error: recv.error };
 
-  // 2. BOSS phân tích yêu cầu
   const analysis = await phanTichYeuCau({
     userId,
     conversationId,
@@ -133,7 +121,6 @@ async function runBossPipeline({
   });
   if (!analysis.ok) return { ok: false, error: analysis.error };
 
-  // 3. Tra Web nếu cần
   let webContext = "";
   if (analysis.analysis.needWeb) {
     const web = await traWeb({
@@ -145,11 +132,9 @@ async function runBossPipeline({
     if (web.ok) webContext = formatWebResults(web.results);
   }
 
-  // 4. Chọn BOSS từ key Đại Não
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
-  // 5. Gọi BOSS lập kế hoạch
   const bossMessages = buildBossPlanMessages({
     userRequest,
     analysis: analysis.analysis,
@@ -166,7 +151,6 @@ async function runBossPipeline({
     signal,
   });
 
-  // Nếu BOSS cũ lỗi → gọi BOSS mới
   if (!bossRes.ok) {
     await logWarn("BOSS cũ lỗi, gọi BOSS mới", {
       userId,
@@ -176,7 +160,6 @@ async function runBossPipeline({
 
     const handoff = await banGiaoTrangThai({ userId, conversationId });
     const handoffPrompt = handoff.ok ? buildHandoffPrompt(handoff.handoff) : "";
-
     const messagesWithHandoff = handoffPrompt
       ? [...bossMessages, { role: "system", content: handoffPrompt }]
       : bossMessages;
@@ -195,7 +178,6 @@ async function runBossPipeline({
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
   const bossPlan = bossRes.ok ? bossRes.text : "";
 
-  // 6. BOSS viết format
   const formatRes = await vietFormat({
     userId,
     conversationId,
@@ -205,7 +187,6 @@ async function runBossPipeline({
   });
   if (!formatRes.ok) return { ok: false, error: formatRes.error };
 
-  // 7. Giao format cho Tiểu Não
   const giao = await giaoFormat({
     userId,
     conversationId,
@@ -214,7 +195,6 @@ async function runBossPipeline({
   });
   if (!giao.ok) return { ok: false, error: giao.error };
 
-  // 8. Gọi lính
   const soldierMessages = buildSoldierMessages({
     userRequest,
     format: formatRes.format,
@@ -234,7 +214,6 @@ async function runBossPipeline({
 
   if (!linh.ok) return { ok: false, error: linh.error || "Lính không hoàn thành" };
 
-  // 9. Nhận + đánh giá
   const received = await nhanKetQuaLinh({
     userId,
     conversationId,
@@ -247,7 +226,6 @@ async function runBossPipeline({
     mergedText: received.merged || linh.text,
   });
 
-  // 10. Nếu là code → Sandbox
   let finalText = linh.text || received.merged || "";
   let sandboxMeta = null;
   let codeMeta = null;
@@ -288,7 +266,6 @@ async function runBossPipeline({
     }
   }
 
-  // 11. Trả kết quả cho Rồng Thần
   return {
     ok: true,
     text: finalText,
@@ -410,10 +387,21 @@ function extractCodeBlock(text, language = "") {
 }
 
 // ============================================================
-// ROUTE — GỬI TIN NHẮN (có tệp đính kèm)
+// ROUTE — GỬI TIN NHẮN
 // ============================================================
 
-router.post("/send", upload.array("attachments", 10), async (req, res) => {
+router.post("/send", (req, res, next) => {
+  upload.array("attachments", 10)(req, res, (err) => {
+    if (err) {
+      logWarn("Multer upload lỗi", { error: err?.message || String(err) });
+      return res.status(400).json({
+        ok: false,
+        message: err?.message || "Lỗi upload tệp đính kèm",
+      });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) {
@@ -423,6 +411,14 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
     const conversationId = req.body?.conversationId;
     const text = req.body?.text || "";
     const files = Array.isArray(req.files) ? req.files : [];
+
+    await logInfo("Nhận /chat/send", {
+      userId,
+      conversationId,
+      hasText: !!String(text).trim(),
+      filesCount: files.length,
+      fileNames: files.map((f) => `${f.originalname} (${f.size}b, ${f.mimetype})`),
+    });
 
     if (!conversationId) {
       return res
@@ -434,7 +430,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
     }
 
-    // 1. Rồng Thần nhận yêu cầu
+    // 1. Nhận yêu cầu
     const recv = await gwNhanYeuCau({
       userId,
       conversationId,
@@ -451,9 +447,13 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       for (const f of files) {
         try {
           const isImage = String(f.mimetype || "").startsWith("image/");
-          const dataUrl = isImage
-            ? `data:${f.mimetype};base64,${f.buffer.toString("base64")}`
-            : "";
+          const tooBig = isImage && f.size > MAX_IMAGE_BYTES;
+
+          let dataUrl = "";
+          if (isImage && !tooBig) {
+            dataUrl = `data:${f.mimetype};base64,${f.buffer.toString("base64")}`;
+          }
+
           const att = await saveAttachment({
             userId,
             conversationId,
@@ -464,16 +464,27 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
             url: "",
             dataUrl,
           });
+
           savedAttachments.push({
             id: String(att._id),
             name: att.name,
             type: att.type,
             size: att.size,
             url: "",
-            dataUrl: att.dataUrl,
+            dataUrl: att.dataUrl || "",
+          });
+
+          await logInfo("Đã lưu tệp đính kèm", {
+            userId,
+            name: f.originalname,
+            isImage,
+            tooBig,
+            size: f.size,
+            dataUrlLength: dataUrl.length,
           });
         } catch (e) {
           await logWarn("Không lưu được tệp đính kèm", {
+            name: f?.originalname,
             error: e?.message || String(e),
           });
         }
@@ -489,7 +500,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       runBoss: runBossPipeline,
     });
 
-    // 3. Nhận kết quả từ BOSS
+    // 3. Nhận kết quả
     const received = await nhanKetQuaTuBoss({
       userId,
       conversationId,
@@ -499,7 +510,7 @@ router.post("/send", upload.array("attachments", 10), async (req, res) => {
       return res.status(500).json({ ok: false, message: received.error });
     }
 
-    // 4. Trả kết quả cho User
+    // 4. Trả cho User
     const delivered = await traKetQuaChoUser({
       userId,
       conversationId,
@@ -550,7 +561,7 @@ router.post("/conversations", async (req, res) => {
 });
 
 // ============================================================
-// ROUTE — LẤY TIN NHẮN (kèm attachments + dataUrl)
+// ROUTE — LẤY TIN NHẮN
 // ============================================================
 
 router.get("/conversations/:conversationId/messages", async (req, res) => {
