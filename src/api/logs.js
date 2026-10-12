@@ -1,26 +1,16 @@
 // src/api/logs.js
-// Nhiệm vụ: API Rồng Thần Logs
+// Nhiệm vụ: API Rồng Thần Logs.
 // - Đọc log thật từ backend
-// - Lọc theo mức
-// - Tìm kiếm
-// - Xóa log (trong phạm vi backend cho phép)
+// - Lọc theo mức, tìm kiếm
+// - Xóa log trong phạm vi backend cho phép
 // - Tải log .txt
 
-import api, { getToken } from "./client.js";
+import api, { getStoredUserId } from "./client.js";
 
 // ============================================================
 // ĐỌC LOGS
 // ============================================================
 
-/**
- * @param {object} [opts]
- * @param {string} [opts.level] - "all" | "info" | "warn" | "error" | "debug"
- * @param {string} [opts.search]
- * @param {number} [opts.limit=200]
- * @param {string} [opts.cursor] - phân trang
- * @returns {Promise<{items: LogItem[], nextCursor: string|null, serverStatus: string}>}
- * LogItem = { id, timestamp, level, message }
- */
 export async function fetchLogs({
   level = "all",
   search = "",
@@ -49,10 +39,6 @@ export async function getServerStatus() {
 // XÓA LOGS
 // ============================================================
 
-/**
- * Xóa log trong phạm vi backend cho phép.
- * Phải xác nhận trước khi gọi.
- */
 export async function clearLogs() {
   return api.post("/logs/clear", {});
 }
@@ -62,8 +48,6 @@ export async function clearLogs() {
 // ============================================================
 
 /**
- * Tải toàn bộ log trong phạm vi backend cho phép dưới dạng .txt
- * Trả về Blob, caller tự tạo link tải.
  * @param {object} [opts]
  * @returns {Promise<Blob>}
  */
@@ -81,8 +65,8 @@ export async function downloadLogsTxt({ level = "all", search = "" } = {}) {
 
   const url = `${base}/logs/export?${params.toString()}`;
   const headers = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const userId = getStoredUserId();
+  if (userId) headers["X-User-Id"] = userId;
 
   const res = await fetch(url, { headers });
   if (!res.ok) {
@@ -92,15 +76,9 @@ export async function downloadLogsTxt({ level = "all", search = "" } = {}) {
 }
 
 // ============================================================
-// LUỒNG CẬP NHẬT (nếu backend hỗ trợ SSE)
+// LUỒNG CẬP NHẬT (SSE — nếu backend hỗ trợ)
 // ============================================================
 
-/**
- * Mở kết nối SSE để nhận log mới.
- * @param {(item: object) => void} onItem
- * @param {(err: any) => void} [onError]
- * @returns {() => void} hàm hủy kết nối
- */
 export function streamLogs(onItem, onError) {
   const base =
     (typeof import.meta !== "undefined" &&
@@ -108,12 +86,12 @@ export function streamLogs(onItem, onError) {
       import.meta.env.VITE_API_BASE_URL) ||
     "/api";
 
-  const token = getToken();
+  const userId = getStoredUserId();
   const url = new URL(
     `${base}/logs/stream`,
     typeof window !== "undefined" ? window.location.origin : "http://localhost"
   );
-  if (token) url.searchParams.set("token", token);
+  if (userId) url.searchParams.set("userId", userId);
 
   let es;
   try {

@@ -1,10 +1,9 @@
 // src/api/auth.js
-// Nhiệm vụ: API xác thực & tài khoản
-// - Đăng ký, đăng nhập, đăng xuất
-// - Lấy thông tin tài khoản hiện tại
-// - Đổi ID, đổi mật khẩu, xóa tài khoản
+// Nhiệm vụ: API xác thực & tài khoản.
+// Theo dự án: đăng nhập trực tiếp, không dùng JWT.
+// Client lưu userId vào localStorage và gửi kèm header X-User-Id.
 
-import api, { setToken, clearToken } from "./client.js";
+import api, { setStoredUserId, clearStoredUserId } from "./client.js";
 
 // ============================================================
 // ĐĂNG KÝ
@@ -12,7 +11,7 @@ import api, { setToken, clearToken } from "./client.js";
 
 /**
  * @param {{ userId: string, password: string, confirmPassword: string }} payload
- * @returns {Promise<{ user: object, token: string }>}
+ * @returns {Promise<{ user: object }>}
  */
 export async function register({ userId, password, confirmPassword }) {
   const res = await api.post("/auth/register", {
@@ -20,7 +19,7 @@ export async function register({ userId, password, confirmPassword }) {
     password,
     confirmPassword,
   });
-  if (res?.token) setToken(res.token);
+  if (res?.user?.userId) setStoredUserId(res.user.userId);
   return res;
 }
 
@@ -30,11 +29,11 @@ export async function register({ userId, password, confirmPassword }) {
 
 /**
  * @param {{ userId: string, password: string }} payload
- * @returns {Promise<{ user: object, token: string }>}
+ * @returns {Promise<{ user: object }>}
  */
 export async function login({ userId, password }) {
   const res = await api.post("/auth/login", { userId, password });
-  if (res?.token) setToken(res.token);
+  if (res?.user?.userId) setStoredUserId(res.user.userId);
   return res;
 }
 
@@ -46,9 +45,9 @@ export async function logout() {
   try {
     await api.post("/auth/logout", {});
   } catch {
-    /* dù lỗi vẫn xóa token phía client */
+    /* dù lỗi vẫn xóa userId phía client */
   } finally {
-    clearToken();
+    clearStoredUserId();
   }
 }
 
@@ -68,7 +67,12 @@ export async function me() {
  * @param {{ currentPassword: string, newUserId: string }} payload
  */
 export async function changeUserId({ currentPassword, newUserId }) {
-  return api.post("/auth/change-id", { currentPassword, newUserId });
+  const res = await api.post("/auth/change-id", {
+    currentPassword,
+    newUserId,
+  });
+  if (res?.user?.userId) setStoredUserId(res.user.userId);
+  return res;
 }
 
 // ============================================================
@@ -96,13 +100,12 @@ export async function changePassword({
 
 /**
  * @param {{ currentPassword: string, confirmText: string }} payload
- * confirmText phải đúng chuỗi xác nhận mà backend quy định.
  */
 export async function deleteAccount({ currentPassword, confirmText }) {
   const res = await api.post("/auth/delete-account", {
     currentPassword,
     confirmText,
   });
-  clearToken();
+  clearStoredUserId();
   return res;
 }
