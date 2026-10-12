@@ -1,0 +1,98 @@
+// server/sandbox/doc-ket-qua.js
+// Nhiệm vụ: Đọc kết quả Sandbox và phân loại.
+// Trạng thái theo PHẦN 07 (shared/constants/sandboxStatus.js):
+//   "idle" | "running" | "passed" | "failed" | "error"
+
+// ============================================================
+// TRẠNG THÁI CHUẨN
+// ============================================================
+
+export const SANDBOX_STATUS = {
+  IDLE: "idle",
+  RUNNING: "running",
+  PASSED: "passed",
+  FAILED: "failed",
+  ERROR: "error",
+};
+
+// ============================================================
+// PHÂN LOẠI KẾT QUẢ
+// ============================================================
+
+/**
+ * @param {object} raw  - kết quả thô từ sendToSandbox
+ * @returns {{status: string, stdout: string, stderr: string, isPass: boolean}}
+ */
+export function readResult(raw) {
+  if (!raw) {
+    return {
+      status: SANDBOX_STATUS.ERROR,
+      stdout: "",
+      stderr: "",
+      isPass: false,
+    };
+  }
+
+  const stdout = String(raw.stdout || "");
+  const stderr = String(raw.stderr || "");
+
+  // Nếu có stderr → failed (trừ khi backend nói rõ là passed)
+  if (raw.status === "passed" && !stderr) {
+    return {
+      status: SANDBOX_STATUS.PASSED,
+      stdout,
+      stderr,
+      isPass: true,
+    };
+  }
+
+  if (raw.status === "failed" || stderr) {
+    return {
+      status: SANDBOX_STATUS.FAILED,
+      stdout,
+      stderr,
+      isPass: false,
+    };
+  }
+
+  if (raw.ok === false) {
+    return {
+      status: SANDBOX_STATUS.ERROR,
+      stdout,
+      stderr,
+      isPass: false,
+    };
+  }
+
+  // Mặc định: nếu không có stderr → coi là passed
+  return {
+    status: stdout || raw.ok ? SANDBOX_STATUS.PASSED : SANDBOX_STATUS.ERROR,
+    stdout,
+    stderr,
+    isPass: !stderr && !!raw.ok,
+  };
+}
+
+// ============================================================
+// KIỂM TRA
+// ============================================================
+
+export function isPass(result) {
+  return result?.status === SANDBOX_STATUS.PASSED;
+}
+
+export function isFail(result) {
+  return result?.status === SANDBOX_STATUS.FAILED;
+}
+
+export function isError(result) {
+  return result?.status === SANDBOX_STATUS.ERROR;
+}
+
+export default {
+  SANDBOX_STATUS,
+  readResult,
+  isPass,
+  isFail,
+  isError,
+};
