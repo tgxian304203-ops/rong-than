@@ -1,10 +1,8 @@
 // src/pages/history.js
 // Nhiệm vụ: Lịch sử trò chuyện.
-// Quy tắc dự án (PHẦN 04, mục 8):
-//   - Hiển thị tối đa 10 cuộc trò chuyện MỚI NHẤT
-//   - Cuộc trò chuyện cũ hơn KHÔNG bị xóa chỉ vì không nằm trong danh sách
-//   - Mở đúng nội dung hội thoại tương ứng khi chọn
-//   - KHÔNG tự xóa lịch sử cũ
+// - Hiển thị TẤT CẢ hội thoại không thuộc dự án
+// - Hội thoại trong dự án KHÔNG hiện ở đây
+// - Có nút "Xóa tất cả" dưới danh sách
 
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -16,12 +14,13 @@ import { useUI } from "../store/uiStore.js";
 
 export default function History() {
   const navigate = useNavigate();
-  const { showToast } = useUI();
+  const { confirm, showToast } = useUI();
   const {
     recentConversations,
     loadRecentConversations,
     openConversation,
     deleteConversation,
+    deleteAllConversations,
   } = useChat();
 
   useEffect(() => {
@@ -38,6 +37,33 @@ export default function History() {
     const res = await deleteConversation(convo.id);
     if (res?.ok) showToast("Đã xóa cuộc trò chuyện", "success", 2000);
     else showToast(res?.error || "Xóa thất bại", "error", 4000);
+  };
+
+  const handleDeleteAll = async () => {
+    if (recentConversations.length === 0) {
+      showToast("Không có cuộc trò chuyện nào để xóa", "info", 2000);
+      return;
+    }
+
+    const yes = await confirm({
+      title: "Xóa tất cả lịch sử",
+      message: `Bạn có chắc muốn xóa TẤT CẢ ${recentConversations.length} cuộc trò chuyện trong lịch sử? Hành động này không thể hoàn tác.`,
+      confirmText: "Xóa tất cả",
+      cancelText: "Hủy",
+      tone: "danger",
+    });
+    if (!yes) return;
+
+    const res = await deleteAllConversations();
+    if (res?.ok) {
+      showToast(
+        `Đã xóa ${res.deleted || 0} cuộc trò chuyện`,
+        "success",
+        2500
+      );
+    } else {
+      showToast(res?.error || "Xóa tất cả thất bại", "error", 4000);
+    }
   };
 
   return (
@@ -78,15 +104,36 @@ export default function History() {
           </div>
         )}
 
+        {recentConversations.length > 0 ? (
+          <button
+            type="button"
+            onClick={handleDeleteAll}
+            className="no-select"
+            style={{
+              marginTop: "var(--space-5)",
+              width: "100%",
+              minHeight: 48,
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-error)",
+              color: "var(--color-error)",
+              fontSize: "var(--font-base)",
+              fontWeight: 700,
+              backgroundColor: "rgba(239, 68, 68, 0.08)",
+            }}
+          >
+            🗑 Xóa tất cả lịch sử
+          </button>
+        ) : null}
+
         <div
           style={{
-            marginTop: "var(--space-5)",
+            marginTop: "var(--space-4)",
             textAlign: "center",
             fontSize: "var(--font-xs)",
             color: "var(--color-text-muted)",
           }}
         >
-          Danh sách hiển thị tối đa 10 cuộc trò chuyện gần nhất.
+          Hiển thị tất cả cuộc trò chuyện không thuộc dự án.
         </div>
       </div>
     </div>

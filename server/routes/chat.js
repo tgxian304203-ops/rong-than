@@ -1,6 +1,7 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
 // Xử lý tệp đính kèm với multer. Truyền mô tả ảnh cho BOSS.
+// Lịch sử chat chỉ hiện hội thoại không thuộc dự án.
 
 import express from "express";
 import multer from "multer";
@@ -10,6 +11,7 @@ import {
   listRecentConversations,
   getConversation,
   deleteConversation as dbDeleteConversation,
+  deleteAllNonProjectConversations,
   updateConversationTitle,
 } from "../db/conversations.js";
 import { listMessages } from "../db/messages.js";
@@ -512,8 +514,7 @@ router.post(
       if (savedAttachments.length > 0) {
         const attachDesc = savedAttachments
           .map(
-            (a, i) =>
-              `[${i + 1}] ${a.name} — ${a.type} — ${a.size} bytes`
+            (a, i) => `[${i + 1}] ${a.name} — ${a.type} — ${a.size} bytes`
           )
           .join("\n");
         bossUserRequest = `${bossUserRequest}\n\n[Tệp đính kèm: ${savedAttachments.length}]\n${attachDesc}`;
@@ -617,7 +618,7 @@ router.get("/conversations/:conversationId/messages", async (req, res) => {
 });
 
 // ============================================================
-// ROUTE — HỘI THOẠI GẦN ĐÂY
+// ROUTE — LỊCH SỬ (tất cả hội thoại KHÔNG thuộc dự án)
 // ============================================================
 
 router.get("/conversations/recent", async (req, res) => {
@@ -626,10 +627,27 @@ router.get("/conversations/recent", async (req, res) => {
     if (!userId)
       return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
 
-    const limit = Number(req.query.limit) || 10;
-    const items = await listRecentConversations(userId, { limit });
-    const mapped = items.map((c) => ({ ...c, id: String(c._id) }));
-    return res.json({ ok: true, items: mapped });
+    // Không truyền limit → lấy tất cả
+    const items = await listRecentConversations(userId, {});
+    return res.json({ ok: true, items });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: "Lỗi server" });
+  }
+});
+
+// ============================================================
+// ROUTE — XÓA TẤT CẢ HỘI THOẠI (không thuộc dự án)
+// QUAN TRỌNG: đặt TRƯỚC route /:conversationId
+// ============================================================
+
+router.delete("/conversations/all", async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId)
+      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+
+    const deleted = await deleteAllNonProjectConversations(userId);
+    return res.json({ ok: true, deleted });
   } catch (err) {
     return res.status(500).json({ ok: false, message: "Lỗi server" });
   }

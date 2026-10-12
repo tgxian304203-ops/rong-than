@@ -1,10 +1,7 @@
 // src/store/chatStore.js
 // Nhiệm vụ: Quản lý hội thoại và tin nhắn.
-// - Hội thoại đang mở
-// - Danh sách tin nhắn
-// - Gửi tin nhắn (kèm tệp đính kèm)
-// - Tạo hội thoại mới, xóa hội thoại
-// - Lịch sử gần đây (mặc định 10 mục hiển thị, không xóa cũ)
+// - Lịch sử: TẤT CẢ hội thoại không thuộc dự án
+// - Có hàm deleteAllConversations
 
 import React, {
   createContext,
@@ -27,7 +24,6 @@ export function ChatProvider({ children }) {
 
   // ============================================================
   // TẠO HỘI THOẠI MỚI
-  // Lấy đúng id — backend trả _id (MongoDB), không phải id
   // ============================================================
   const createConversation = useCallback(
     async ({ projectId = null, title = null } = {}) => {
@@ -69,15 +65,12 @@ export function ChatProvider({ children }) {
 
   // ============================================================
   // GỬI TIN NHẮN
-  // Lấy conversationId trực tiếp từ kết quả tạo hội thoại,
-  // KHÔNG dùng activeConversationId từ state (vì có thể null).
   // ============================================================
   const sendMessage = useCallback(
     async ({ text, attachments }) => {
       setSending(true);
       setError(null);
 
-      // ===== BƯỚC 1: Đảm bảo có conversationId =====
       let conversationId = activeConversationId;
 
       if (!conversationId) {
@@ -97,11 +90,9 @@ export function ChatProvider({ children }) {
         }
       }
 
-      // ===== BƯỚC 2: Chuẩn bị abort controller =====
       const controller = new AbortController();
       setAbortController(controller);
 
-      // ===== BƯỚC 3: Thêm tin nhắn User tạm thời =====
       const tempUserMsg = {
         id: `temp-user-${Date.now()}`,
         role: "user",
@@ -120,7 +111,6 @@ export function ChatProvider({ children }) {
           signal: controller.signal,
         });
 
-        // Thay tin nhắn tạm bằng kết quả thật
         setMessages((prev) => {
           const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
           const next = [...withoutTemp];
@@ -129,13 +119,19 @@ export function ChatProvider({ children }) {
           return next;
         });
 
+        // Reload lịch sử để cập nhật tên hội thoại mới
+        try {
+          await loadRecentConversations();
+        } catch {
+          /* bỏ qua */
+        }
+
         return {
           ok: true,
           userMessage: res?.userMessage,
           aiMessage: res?.aiMessage,
         };
       } catch (err) {
-        // Đánh dấu tin nhắn tạm là lỗi
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tempUserMsg.id
@@ -151,6 +147,7 @@ export function ChatProvider({ children }) {
         setAbortController(null);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeConversationId, createConversation]
   );
 
@@ -166,12 +163,12 @@ export function ChatProvider({ children }) {
   }, [abortController]);
 
   // ============================================================
-  // LỊCH SỬ GẦN ĐÂY
+  // LỊCH SỬ — LẤY TẤT CẢ
   // ============================================================
   const loadRecentConversations = useCallback(async () => {
     setError(null);
     try {
-      const res = await chatApi.listRecentConversations({ limit: 10 });
+      const res = await chatApi.listRecentConversations({});
       setRecentConversations(res?.items || []);
       return { ok: true, items: res?.items || [] };
     } catch (err) {
@@ -182,7 +179,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   // ============================================================
-  // XÓA HỘI THOẠI
+  // XÓA 1 HỘI THOẠI
   // ============================================================
   const deleteConversation = useCallback(
     async (conversationId) => {
@@ -207,6 +204,24 @@ export function ChatProvider({ children }) {
   );
 
   // ============================================================
+  // XÓA TẤT CẢ HỘI THOẠI
+  // ============================================================
+  const deleteAllConversations = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await chatApi.deleteAllConversations();
+      setRecentConversations([]);
+      setActiveConversationId(null);
+      setMessages([]);
+      return { ok: true, deleted: res?.deleted || 0 };
+    } catch (err) {
+      const msg = err?.message || "Xóa tất cả thất bại";
+      setError(msg);
+      return { ok: false, error: msg };
+    }
+  }, []);
+
+  // ============================================================
   // RESET
   // ============================================================
   const reset = useCallback(() => {
@@ -229,6 +244,7 @@ export function ChatProvider({ children }) {
       cancelSend,
       loadRecentConversations,
       deleteConversation,
+      deleteAllConversations,
       reset,
     }),
     [
@@ -243,6 +259,7 @@ export function ChatProvider({ children }) {
       cancelSend,
       loadRecentConversations,
       deleteConversation,
+      deleteAllConversations,
       reset,
     ]
   );

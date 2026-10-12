@@ -60,9 +60,17 @@ export async function getMessages(conversationId) {
   );
 }
 
-export async function listRecentConversations({ limit = 10 } = {}) {
-  return api.get(`/chat/conversations/recent?limit=${limit}`);
+// ============================================================
+// LỊCH SỬ — LẤY TẤT CẢ
+// ============================================================
+
+export async function listRecentConversations(_opts = {}) {
+  return api.get(`/chat/conversations/recent`);
 }
+
+// ============================================================
+// TẠO HỘI THOẠI
+// ============================================================
 
 export async function createConversation({
   projectId = null,
@@ -71,12 +79,28 @@ export async function createConversation({
   return api.post("/chat/conversations", { projectId, title });
 }
 
+// ============================================================
+// XÓA 1 HỘI THOẠI
+// ============================================================
+
 export async function deleteConversation(conversationId) {
   if (!conversationId) throw new Error("Thiếu conversationId");
   return api.del(
     `/chat/conversations/${encodeURIComponent(conversationId)}`
   );
 }
+
+// ============================================================
+// XÓA TẤT CẢ HỘI THOẠI (không thuộc dự án)
+// ============================================================
+
+export async function deleteAllConversations() {
+  return api.del(`/chat/conversations/all`);
+}
+
+// ============================================================
+// ĐỔI TÊN HỘI THOẠI
+// ============================================================
 
 export async function renameConversation(conversationId, title) {
   if (!conversationId) throw new Error("Thiếu conversationId");

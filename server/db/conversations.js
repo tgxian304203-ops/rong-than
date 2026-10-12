@@ -1,5 +1,7 @@
 // server/db/conversations.js
 // Nhiệm vụ: Collection conversations — cuộc trò chuyện.
+// - Hội thoại không thuộc dự án có projectId = null
+// - Hội thoại thuộc dự án có projectId = <id dự án>
 
 import { ObjectId } from "mongodb";
 
@@ -45,6 +47,9 @@ export async function getConversation(userId, conversationId) {
   return { ...doc, id: String(doc._id) };
 }
 
+/**
+ * Danh sách hội thoại trong 1 dự án.
+ */
 export async function listConversationsByProject(userId, projectId) {
   const items = await col()
     .find({ userId, projectId: String(projectId) })
@@ -53,12 +58,21 @@ export async function listConversationsByProject(userId, projectId) {
   return items.map((it) => ({ ...it, id: String(it._id) }));
 }
 
-export async function listRecentConversations(userId, { limit = 10 } = {}) {
-  const items = await col()
-    .find({ userId })
-    .sort({ updatedAt: -1 })
-    .limit(limit)
-    .toArray();
+/**
+ * Danh sách lịch sử chat — CHỈ hội thoại KHÔNG thuộc dự án.
+ * projectId phải = null.
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.limit] — nếu bỏ trống hoặc 0 → lấy tất cả
+ */
+export async function listRecentConversations(userId, { limit = 0 } = {}) {
+  let cursor = col()
+    .find({ userId, projectId: null })
+    .sort({ updatedAt: -1 });
+
+  if (limit > 0) cursor = cursor.limit(limit);
+
+  const items = await cursor.toArray();
   return items.map((it) => ({ ...it, id: String(it._id) }));
 }
 
@@ -86,10 +100,6 @@ export async function updateConversationTitle(conversationId, title) {
   return res.modifiedCount > 0;
 }
 
-/**
- * Đổi tên hội thoại nếu đang dùng tên mặc định.
- * Dùng khi user gửi tin nhắn đầu tiên.
- */
 export async function updateTitleIfDefault(conversationId, newTitle) {
   const _id = toObjectId(conversationId);
   if (!_id) return false;
@@ -97,7 +107,6 @@ export async function updateTitleIfDefault(conversationId, newTitle) {
   const trimmed = String(newTitle || "").trim();
   if (!trimmed) return false;
 
-  // Cắt tối đa 60 ký tự
   const title = trimmed.length > 60 ? trimmed.slice(0, 57) + "…" : trimmed;
 
   const res = await col().updateOne(
@@ -128,6 +137,15 @@ export async function deleteConversationsByProject(userId, projectId) {
 
 export async function deleteConversationsByUser(userId) {
   const res = await col().deleteMany({ userId });
+  return res.deletedCount;
+}
+
+/**
+ * Xóa TẤT CẢ hội thoại KHÔNG thuộc dự án của 1 user.
+ * Dùng cho nút "Xóa tất cả" ở Lịch sử chat.
+ */
+export async function deleteAllNonProjectConversations(userId) {
+  const res = await col().deleteMany({ userId, projectId: null });
   return res.deletedCount;
 }
 
