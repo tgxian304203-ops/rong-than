@@ -1,10 +1,8 @@
 // src/api/client.js
-// Nhiệm vụ: HTTP client nền cho toàn bộ API
+// Nhiệm vụ: HTTP client nền cho toàn bộ API.
 // - Base URL
 // - Gắn X-User-Id (theo cách xác thực của dự án — không dùng JWT)
-// - Xử lý JSON
-// - Chuẩn hóa lỗi
-// - Không báo thành công khi backend chưa xác nhận
+// - Timeout 90 giây cho mỗi request
 
 const BASE_URL =
   (typeof import.meta !== "undefined" &&
@@ -15,7 +13,13 @@ const BASE_URL =
 const USER_ID_STORAGE_KEY = "rong_than_user_id";
 
 // ============================================================
-// USER ID (thay cho token — dự án không dùng JWT)
+// TIMEOUT
+// ============================================================
+
+const REQUEST_TIMEOUT_MS = 90000; // 90 giây
+
+// ============================================================
+// USER ID
 // ============================================================
 
 export function getStoredUserId() {
@@ -44,7 +48,7 @@ export function clearStoredUserId() {
 }
 
 // ============================================================
-// LỖI CHUẨN
+// LỖI
 // ============================================================
 
 export class ApiError extends Error {
@@ -73,13 +77,11 @@ export async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const finalHeaders = { ...headers };
 
-  // Gắn X-User-Id (backend đọc header này để biết user)
   const userId = getStoredUserId();
   if (userId) {
     finalHeaders["X-User-Id"] = userId;
   }
 
-  // Body
   let finalBody = undefined;
   if (body !== undefined) {
     if (isFormData) {
@@ -90,26 +92,45 @@ export async function request(path, options = {}) {
     }
   }
 
+  // Kết hợp signal từ caller + timeout
+  const timeoutCtrl = new AbortController();
+  const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+
+  const finalSignal = signal
+    ? combineAbortSignals(signal, timeoutCtrl.signal)
+    : timeoutCtrl.signal;
+
   let res;
   try {
     res = await fetch(url, {
       method,
       headers: finalHeaders,
       body: finalBody,
-      signal,
+      signal: finalSignal,
       credentials: "include",
     });
   } catch (err) {
+    clearTimeout(timeoutId);
+
     if (err?.name === "AbortError") {
+      // Kiểm tra do timeout hay do caller hủy
+      if (timeoutCtrl.signal.aborted) {
+        throw new ApiError(
+          "Yêu cầu quá thời gian (90 giây). Vui lòng thử lại.",
+          { code: "TIMEOUT" }
+        );
+      }
       throw new ApiError("Yêu cầu đã bị hủy", { code: "ABORTED" });
     }
+
     throw new ApiError("Không kết nối được tới server", {
       code: "NETWORK_ERROR",
       details: err?.message,
     });
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  // Đọc nội dung
   const contentType = res.headers.get("content-type") || "";
   let data = null;
 
@@ -137,7 +158,6 @@ export async function request(path, options = {}) {
     const details =
       (data && typeof data === "object" && data.details) || null;
 
-    // 401 → xóa user id
     if (res.status === 401) {
       clearStoredUserId();
     }
@@ -146,6 +166,24 @@ export async function request(path, options = {}) {
   }
 
   return data;
+}
+
+// ============================================================
+// KẾT HỢP 2 ABORT SIGNAL
+// ============================================================
+
+function combineAbortSignals(s1, s2) {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+
+  if (s1.aborted || s2.aborted) {
+    ctrl.abort();
+  } else {
+    s1.addEventListener("abort", onAbort, { once: true });
+    s2.addEventListener("abort", onAbort, { once: true });
+  }
+
+  return ctrl.signal;
 }
 
 // ============================================================

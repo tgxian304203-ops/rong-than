@@ -1,9 +1,7 @@
 // src/components/MessageBubble.js
 // Nhiệm vụ: Khung tin nhắn AI hoặc User.
-// - AI: nhãn 🔥🐉 Rồng Thần, căn trái, chữ xanh lá
-// - User: nhãn 👾 User, căn phải, chữ trắng
-// - Tự tách code block ``` để hiển thị riêng
-// - Tin AI: code block có kèm Sandbox (LiveCodes online)
+// - Tách code block ``` để hiển thị riêng
+// - Code block có nút Copy + Sandbox LiveCodes (chỉ AI)
 // - Ảnh có thể bấm vào để xem full-size
 
 import React, { useState } from "react";
@@ -95,7 +93,7 @@ export default function MessageBubble({ message }) {
             </div>
           ) : null}
 
-          {/* NỘI DUNG — TÁCH TEXT VÀ CODE */}
+          {/* NỘI DUNG */}
           {parts.map((part, idx) => {
             if (part.type === "code") {
               return (
@@ -104,7 +102,6 @@ export default function MessageBubble({ message }) {
                     language={part.language}
                     code={part.content}
                   />
-                  {/* Chỉ hiện Sandbox khi là AI */}
                   {isAI ? (
                     <SandboxEmbed
                       code={part.content}
@@ -132,7 +129,7 @@ export default function MessageBubble({ message }) {
             return null;
           })}
 
-          {/* TRẠNG THÁI GỬI */}
+          {/* TRẠNG THÁI */}
           {message.pending ? (
             <div
               style={{
@@ -344,7 +341,7 @@ function CodeBlock({ language, code }) {
 }
 
 // ============================================================
-// XEM TRƯỚC TỆP ĐÍNH KÈM
+// ATTACHMENT PREVIEW
 // ============================================================
 function AttachmentPreview({ attachment, isAI, onOpenImage }) {
   const url = attachment.url || null;

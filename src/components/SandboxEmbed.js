@@ -1,7 +1,6 @@
 // src/components/SandboxEmbed.js
 // Nhiệm vụ: Nhúng LiveCodes ONLINE để chạy thử code.
 // LiveCodes chạy hoàn toàn trong trình duyệt — không cần backend, không cần API key.
-// Trang chính: https://livecodes.io
 
 import React, { useMemo, useState } from "react";
 
@@ -30,12 +29,11 @@ function normalizeLang(lang) {
 }
 
 // ============================================================
-// ENCODE BASE64 — LiveCodes hiểu tham số base64
+// ENCODE BASE64
 // ============================================================
 
 function b64(str) {
   try {
-    // Trình duyệt: dùng btoa với UTF-8 an toàn
     return btoa(unescape(encodeURIComponent(String(str || ""))));
   } catch {
     return "";
@@ -46,13 +44,11 @@ function b64(str) {
 // SANDBOX EMBED
 // ============================================================
 
-/**
- * @param {object} props
- * @param {string} props.code       — mã nguồn
- * @param {string} [props.language] — ngôn ngữ (html|js|python|...)
- * @param {string} [props.title]    — tiêu đề (mặc định "Sandbox")
- */
-export default function SandboxEmbed({ code, language = "javascript", title = "Sandbox" }) {
+export default function SandboxEmbed({
+  code,
+  language = "javascript",
+  title = "Sandbox",
+}) {
   const [open, setOpen] = useState(false);
 
   const embedUrl = useMemo(() => {
@@ -62,9 +58,6 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
     const encoded = b64(code);
     if (!encoded) return null;
 
-    // Build URL LiveCodes online
-    // https://livecodes.io/?<param>=<base64>
-    // Ví dụ: ?html=<b64> hoặc ?js=<b64>
     const params = new URLSearchParams();
     params.set(param, encoded);
 
@@ -95,7 +88,7 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
         padding: "var(--space-3)",
         display: "flex",
         flexDirection: "column",
-        gap: "var(--space-3)",
+        gap: "var(--space-2)",
       }}
     >
       {/* Header */}
@@ -105,6 +98,7 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
           alignItems: "center",
           justifyContent: "space-between",
           gap: "var(--space-2)",
+          flexWrap: "wrap",
         }}
       >
         <div
@@ -118,35 +112,57 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
         >
           🧪 {title}
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="no-select"
-          style={{
-            padding: "6px 12px",
-            borderRadius: "var(--radius-md)",
-            border: "1px solid var(--color-border-strong)",
-            color: "var(--color-ai-text)",
-            fontSize: "var(--font-xs)",
-            fontWeight: 600,
-          }}
-        >
-          {open ? "Ẩn" : "Chạy thử"}
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="no-select"
+            style={{
+              padding: "6px 12px",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-border-strong)",
+              color: "var(--color-ai-text)",
+              fontSize: "var(--font-xs)",
+              fontWeight: 600,
+            }}
+          >
+            {open ? "Ẩn" : "Chạy thử"}
+          </button>
+          <a
+            href={embedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="no-select"
+            style={{
+              padding: "6px 12px",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-border-strong)",
+              color: "var(--color-text-primary)",
+              fontSize: "var(--font-xs)",
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            ↗ Mở
+          </a>
+        </div>
       </div>
 
-      {/* Thông tin ngôn ngữ */}
+      {/* Info */}
       <div
         style={{
           fontSize: "var(--font-xs)",
           color: "var(--color-text-muted)",
         }}
       >
-        Ngôn ngữ: <strong style={{ color: "var(--color-text-secondary)" }}>{language}</strong>
+        Ngôn ngữ:{" "}
+        <strong style={{ color: "var(--color-text-secondary)" }}>
+          {language}
+        </strong>
         {" · "}Chạy bằng LiveCodes (client-side)
       </div>
 
-      {/* Iframe LiveCodes */}
+      {/* Iframe */}
       {open ? (
         <div
           style={{
@@ -162,7 +178,7 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
             src={embedUrl}
             title={title}
             allow="clipboard-read; clipboard-write; fullscreen"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
             style={{
               width: "100%",
               height: "100%",
@@ -173,18 +189,11 @@ export default function SandboxEmbed({ code, language = "javascript", title = "S
         </div>
       ) : null}
 
-      {/* Fallback: mở tab mới nếu iframe không load được */}
+      {/* Ghi chú */}
       <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
-        Nếu khung không hiển thị,{" "}
-        <a
-          href={embedUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "var(--color-ai-text)", textDecoration: "underline" }}
-        >
-          mở LiveCodes trong tab mới
-        </a>
-        .
+        Nếu khung không hiển thị, bấm nút{" "}
+        <strong style={{ color: "var(--color-text-secondary)" }}>↗ Mở</strong>{" "}
+        để chạy trong tab mới.
       </div>
     </section>
   );
