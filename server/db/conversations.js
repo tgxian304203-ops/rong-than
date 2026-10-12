@@ -1,13 +1,15 @@
 // server/db/conversations.js
 // Nhiệm vụ: Collection conversations — cuộc trò chuyện.
-// Theo đặc tả: Lịch sử gần đây hiển thị tối đa 10 mục.
-// Nhưng KHÔNG xóa cũ — chỉ giới hạn số hiển thị.
+// Lịch sử gần đây hiển thị tối đa 10 mục nhưng KHÔNG xóa cũ.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function conversationsCol() {
-  return col(COLLECTIONS.conversations);
+const COL_NAME = "conversations";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
@@ -27,7 +29,7 @@ export async function createConversation({
     createdAt: now,
     updatedAt: now,
   };
-  const res = await conversationsCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -38,22 +40,18 @@ export async function createConversation({
 export async function getConversation(userId, conversationId) {
   const _id = toObjectId(conversationId);
   if (!_id) return null;
-  return conversationsCol().findOne({ _id, userId });
+  return col().findOne({ _id, userId });
 }
 
 export async function listConversationsByProject(userId, projectId) {
-  return conversationsCol()
+  return col()
     .find({ userId, projectId: String(projectId) })
     .sort({ updatedAt: -1 })
     .toArray();
 }
 
-/**
- * Lịch sử gần đây.
- * Mặc định limit = 10 theo đặc tả, nhưng cho phép override.
- */
 export async function listRecentConversations(userId, { limit = 10 } = {}) {
-  return conversationsCol()
+  return col()
     .find({ userId })
     .sort({ updatedAt: -1 })
     .limit(limit)
@@ -67,7 +65,7 @@ export async function listRecentConversations(userId, { limit = 10 } = {}) {
 export async function touchConversation(conversationId) {
   const _id = toObjectId(conversationId);
   if (!_id) return false;
-  const res = await conversationsCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     { $set: { updatedAt: new Date() } }
   );
@@ -77,7 +75,7 @@ export async function touchConversation(conversationId) {
 export async function updateConversationTitle(conversationId, title) {
   const _id = toObjectId(conversationId);
   if (!_id) return false;
-  const res = await conversationsCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     { $set: { title, updatedAt: new Date() } }
   );
@@ -91,15 +89,24 @@ export async function updateConversationTitle(conversationId, title) {
 export async function deleteConversation(userId, conversationId) {
   const _id = toObjectId(conversationId);
   if (!_id) return false;
-  const res = await conversationsCol().deleteOne({ _id, userId });
+  const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
 }
 
 export async function deleteConversationsByProject(userId, projectId) {
-  const res = await conversationsCol().deleteMany({
+  const res = await col().deleteMany({
     userId,
     projectId: String(projectId),
   });
+  return res.deletedCount;
+}
+
+// ============================================================
+// XÓA TẤT CẢ HỘI THOẠI CỦA 1 USER
+// ============================================================
+
+export async function deleteConversationsByUser(userId) {
+  const res = await col().deleteMany({ userId });
   return res.deletedCount;
 }
 

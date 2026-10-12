@@ -1,14 +1,15 @@
 // server/db/tieuNaoKeys.js
 // Nhiệm vụ: Collection tieuNaoKeys — key của Tiểu Não.
-// Quy tắc dự án:
-//   - Tiểu Não và Đại Não ĐỘC LẬP key hoàn toàn.
-//   - Không trộn key giữa hai tầng.
+// Tiểu Não và Đại Não ĐỘC LẬP key hoàn toàn.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function tieuNaoKeysCol() {
-  return col(COLLECTIONS.tieuNaoKeys);
+const COL_NAME = "tieuNaoKeys";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
@@ -33,7 +34,7 @@ export async function addKey({
     updatedAt: now,
     lastCheckedAt: now,
   };
-  const res = await tieuNaoKeysCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -42,14 +43,11 @@ export async function addKey({
 // ============================================================
 
 export async function listKeys(userId) {
-  return tieuNaoKeysCol()
-    .find({ userId })
-    .sort({ createdAt: -1 })
-    .toArray();
+  return col().find({ userId }).sort({ createdAt: -1 }).toArray();
 }
 
 export async function listKeysByProvider(userId, provider) {
-  return tieuNaoKeysCol()
+  return col()
     .find({ userId, provider })
     .sort({ createdAt: -1 })
     .toArray();
@@ -58,11 +56,11 @@ export async function listKeysByProvider(userId, provider) {
 export async function getKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return null;
-  return tieuNaoKeysCol().findOne({ _id, userId });
+  return col().findOne({ _id, userId });
 }
 
 export async function countKeys(userId) {
-  return tieuNaoKeysCol().countDocuments({ userId });
+  return col().countDocuments({ userId });
 }
 
 // ============================================================
@@ -72,7 +70,7 @@ export async function countKeys(userId) {
 export async function updateQuota(keyId, quota) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await tieuNaoKeysCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     { $set: { quota, lastCheckedAt: new Date(), updatedAt: new Date() } }
   );
@@ -86,8 +84,17 @@ export async function updateQuota(keyId, quota) {
 export async function deleteKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await tieuNaoKeysCol().deleteOne({ _id, userId });
+  const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
+}
+
+// ============================================================
+// XÓA TẤT CẢ KEY TIỂU NÃO CỦA 1 USER
+// ============================================================
+
+export async function deleteKeysByUser(userId) {
+  const res = await col().deleteMany({ userId });
+  return res.deletedCount;
 }
 
 // ============================================================

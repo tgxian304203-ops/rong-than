@@ -1,26 +1,18 @@
 // server/db/messages.js
 // Nhiệm vụ: Collection messages — tin nhắn trong cuộc trò chuyện.
 
-import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
+const COL_NAME = "messages";
 
-export function messagesCol() {
-  return col(COLLECTIONS.messages);
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
 // TẠO
 // ============================================================
 
-/**
- * @param {object} msg
- * @param {string} msg.conversationId
- * @param {string} msg.userId
- * @param {"user"|"ai"} msg.role
- * @param {string} msg.text
- * @param {Array} [msg.attachments]
- * @param {object} [msg.meta]  — thông tin bổ sung (model dùng, sandbox run, v.v.)
- */
 export async function createMessage({
   conversationId,
   userId,
@@ -38,7 +30,7 @@ export async function createMessage({
     meta,
     createdAt: new Date(),
   };
-  const res = await messagesCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -47,14 +39,14 @@ export async function createMessage({
 // ============================================================
 
 export async function listMessages(conversationId) {
-  return messagesCol()
+  return col()
     .find({ conversationId: String(conversationId) })
     .sort({ createdAt: 1 })
     .toArray();
 }
 
 export async function countMessages(conversationId) {
-  return messagesCol().countDocuments({
+  return col().countDocuments({
     conversationId: String(conversationId),
   });
 }
@@ -64,20 +56,8 @@ export async function countMessages(conversationId) {
 // ============================================================
 
 export async function deleteMessagesByConversation(conversationId) {
-  const res = await messagesCol().deleteMany({
+  const res = await col().deleteMany({
     conversationId: String(conversationId),
   });
   return res.deletedCount;
-}
-
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
-
-function toObjectId(id) {
-  try {
-    return new ObjectId(String(id));
-  } catch {
-    return null;
-  }
 }

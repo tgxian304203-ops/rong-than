@@ -1,34 +1,23 @@
 // server/db/modelHealth.js
 // Nhiệm vụ: Collection modelHealth — trạng thái khả dụng của model.
-// Dùng để biết model nào còn sống, model nào lỗi, hết quota.
 
-import { col, COLLECTIONS } from "./index.js";
+const COL_NAME = "modelHealth";
 
-export function modelHealthCol() {
-  return col(COLLECTIONS.modelHealth);
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
-// ============================================================
-// TRẠNG THÁI CHUẨN
-// ============================================================
-// "available"  — còn dùng được
-// "no-quota"   — hết quota
-// "error"      — đang lỗi
-// "unknown"    — chưa kiểm tra
-
-// ============================================================
-// GHI / CẬP NHẬT
-// ============================================================
-
 export async function report({
-  tier,          // "dai-nao" | "tieu-nao"
+  tier,
   modelName,
   provider,
   status,
   note = "",
 }) {
   const now = new Date();
-  const res = await modelHealthCol().updateOne(
+  const res = await col().updateOne(
     { tier, modelName, provider },
     {
       $set: {
@@ -47,42 +36,22 @@ export async function report({
   return res.upsertedCount > 0 || res.modifiedCount > 0;
 }
 
-// ============================================================
-// ĐỌC
-// ============================================================
-
 export async function get(tier, modelName, provider) {
-  return modelHealthCol().findOne({ tier, modelName, provider });
+  return col().findOne({ tier, modelName, provider });
 }
 
 export async function listByTier(tier) {
-  return modelHealthCol()
-    .find({ tier })
-    .sort({ updatedAt: -1 })
-    .toArray();
+  return col().find({ tier }).sort({ updatedAt: -1 }).toArray();
 }
 
-/**
- * Lấy danh sách model còn khả dụng.
- */
 export async function listAvailable(tier) {
-  return modelHealthCol()
-    .find({ tier, status: "available" })
-    .toArray();
+  return col().find({ tier, status: "available" }).toArray();
 }
-
-// ============================================================
-// XÓA
-// ============================================================
 
 export async function clearTier(tier) {
-  const res = await modelHealthCol().deleteMany({ tier });
+  const res = await col().deleteMany({ tier });
   return res.deletedCount;
 }
-
-// ============================================================
-// KIỂM TRA NHANH
-// ============================================================
 
 export async function isAvailable(tier, modelName, provider) {
   const doc = await get(tier, modelName, provider);

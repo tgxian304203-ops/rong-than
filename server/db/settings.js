@@ -1,20 +1,17 @@
 // server/db/settings.js
-// Nhiệm vụ: Collection settings — cấu hình riêng của từng user
-// (model đang sử dụng, tủy chọn UI, v.v.)
+// Nhiệm vụ: Collection settings — cấu hình riêng của từng user.
 
-import { col, COLLECTIONS } from "./index.js";
+const COL_NAME = "settings";
 
-export function settingsCol() {
-  return col(COLLECTIONS.settings);
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
-
-// ============================================================
-// GHI / CẬP NHẬT
-// ============================================================
 
 export async function upsertSettings(userId, patch = {}) {
   const now = new Date();
-  const res = await settingsCol().updateOne(
+  const res = await col().updateOne(
     { userId },
     {
       $set: { ...patch, userId, updatedAt: now },
@@ -25,14 +22,9 @@ export async function upsertSettings(userId, patch = {}) {
   return res.upsertedCount > 0 || res.modifiedCount > 0;
 }
 
-// ============================================================
-// ĐỌC
-// ============================================================
-
 export async function getSettings(userId) {
-  const doc = await settingsCol().findOne({ userId });
+  const doc = await col().findOne({ userId });
   if (doc) return doc;
-  // Chưa có → trả về mặc định (không tự tạo bản ghi)
   return {
     userId,
     activeDaiNaoModel: null,
@@ -41,11 +33,7 @@ export async function getSettings(userId) {
   };
 }
 
-// ============================================================
-// XÓA
-// ============================================================
-
 export async function deleteSettings(userId) {
-  const res = await settingsCol().deleteOne({ userId });
+  const res = await col().deleteOne({ userId });
   return res.deletedCount > 0;
 }

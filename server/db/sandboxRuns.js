@@ -1,18 +1,15 @@
 // server/db/sandboxRuns.js
 // Nhiệm vụ: Collection sandboxRuns — các lần chạy Sandbox.
-// Trạng thái theo PHẦN 07 (shared/constants/sandboxStatus.js):
-//   "idle" | "running" | "passed" | "failed" | "error"
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function sandboxRunsCol() {
-  return col(COLLECTIONS.sandboxRuns);
+const COL_NAME = "sandboxRuns";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
-
-// ============================================================
-// GHI
-// ============================================================
 
 export async function createRun({
   userId,
@@ -37,18 +34,14 @@ export async function createRun({
     createdAt: now,
     updatedAt: now,
   };
-  const res = await sandboxRunsCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
-
-// ============================================================
-// CẬP NHẬT KẾT QUẢ
-// ============================================================
 
 export async function finishRun(runId, { status, stdout, stderr, durationMs }) {
   const _id = toObjectId(runId);
   if (!_id) return false;
-  const res = await sandboxRunsCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     {
       $set: {
@@ -63,26 +56,18 @@ export async function finishRun(runId, { status, stdout, stderr, durationMs }) {
   return res.modifiedCount > 0;
 }
 
-// ============================================================
-// ĐỌC
-// ============================================================
-
 export async function getRun(runId) {
   const _id = toObjectId(runId);
   if (!_id) return null;
-  return sandboxRunsCol().findOne({ _id });
+  return col().findOne({ _id });
 }
 
 export async function listByConversation(conversationId) {
-  return sandboxRunsCol()
+  return col()
     .find({ conversationId: String(conversationId) })
     .sort({ createdAt: -1 })
     .toArray();
 }
-
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
 
 function toObjectId(id) {
   try {

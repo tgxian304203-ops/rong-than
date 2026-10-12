@@ -1,15 +1,16 @@
 // server/db/webKeys.js
 // Nhiệm vụ: Collection webKeys — key của Web.
-// Quy tắc dự án:
-//   - Web độc lập với Đại Não và Tiểu Não.
-//   - 3 nhà cung cấp: Tavily, SerpJet, Brave Search.
-//   - KHÔNG tự đổi tên SerpJet thành nhà cung cấp khác.
+// Web độc lập với Đại Não và Tiểu Não.
+// 3 nhà cung cấp: Tavily, SerpJet, Brave Search.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function webKeysCol() {
-  return col(COLLECTIONS.webKeys);
+const COL_NAME = "webKeys";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
@@ -18,7 +19,7 @@ export function webKeysCol() {
 
 export async function addKey({
   userId,
-  provider, // "tavily" | "serpjet" | "brave"
+  provider,
   rawKey,
   maskedKey,
   quota = "ok",
@@ -34,7 +35,7 @@ export async function addKey({
     updatedAt: now,
     lastCheckedAt: now,
   };
-  const res = await webKeysCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -43,14 +44,11 @@ export async function addKey({
 // ============================================================
 
 export async function listKeys(userId) {
-  return webKeysCol()
-    .find({ userId })
-    .sort({ createdAt: -1 })
-    .toArray();
+  return col().find({ userId }).sort({ createdAt: -1 }).toArray();
 }
 
 export async function listKeysByProvider(userId, provider) {
-  return webKeysCol()
+  return col()
     .find({ userId, provider })
     .sort({ createdAt: -1 })
     .toArray();
@@ -59,11 +57,11 @@ export async function listKeysByProvider(userId, provider) {
 export async function getKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return null;
-  return webKeysCol().findOne({ _id, userId });
+  return col().findOne({ _id, userId });
 }
 
 export async function countKeys(userId) {
-  return webKeysCol().countDocuments({ userId });
+  return col().countDocuments({ userId });
 }
 
 // ============================================================
@@ -73,7 +71,7 @@ export async function countKeys(userId) {
 export async function updateQuota(keyId, quota) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await webKeysCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     { $set: { quota, lastCheckedAt: new Date(), updatedAt: new Date() } }
   );
@@ -87,8 +85,17 @@ export async function updateQuota(keyId, quota) {
 export async function deleteKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await webKeysCol().deleteOne({ _id, userId });
+  const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
+}
+
+// ============================================================
+// XÓA TẤT CẢ KEY WEB CỦA 1 USER
+// ============================================================
+
+export async function deleteKeysByUser(userId) {
+  const res = await col().deleteMany({ userId });
+  return res.deletedCount;
 }
 
 // ============================================================

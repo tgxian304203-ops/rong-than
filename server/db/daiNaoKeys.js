@@ -1,15 +1,15 @@
 // server/db/daiNaoKeys.js
 // Nhiệm vụ: Collection daiNaoKeys — key của Đại Não.
-// Quy tắc dự án:
-//   - Đại Não và Tiểu Não ĐỘC LẬP key hoàn toàn.
-//   - Không trộn key giữa hai tầng.
-//   - Xoay key theo vòng lặp khi hết quota.
+// Đại Não và Tiểu Não ĐỘC LẬP key hoàn toàn.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function daiNaoKeysCol() {
-  return col(COLLECTIONS.daiNaoKeys);
+const COL_NAME = "daiNaoKeys";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
@@ -26,15 +26,15 @@ export async function addKey({
   const now = new Date();
   const doc = {
     userId,
-    provider, // "groq" | "gemini" | "openrouter"
+    provider,
     rawKey,
     maskedKey,
-    quota, // "ok" | "out"
+    quota,
     createdAt: now,
     updatedAt: now,
     lastCheckedAt: now,
   };
-  const res = await daiNaoKeysCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -43,14 +43,11 @@ export async function addKey({
 // ============================================================
 
 export async function listKeys(userId) {
-  return daiNaoKeysCol()
-    .find({ userId })
-    .sort({ createdAt: -1 })
-    .toArray();
+  return col().find({ userId }).sort({ createdAt: -1 }).toArray();
 }
 
 export async function listKeysByProvider(userId, provider) {
-  return daiNaoKeysCol()
+  return col()
     .find({ userId, provider })
     .sort({ createdAt: -1 })
     .toArray();
@@ -59,11 +56,11 @@ export async function listKeysByProvider(userId, provider) {
 export async function getKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return null;
-  return daiNaoKeysCol().findOne({ _id, userId });
+  return col().findOne({ _id, userId });
 }
 
 export async function countKeys(userId) {
-  return daiNaoKeysCol().countDocuments({ userId });
+  return col().countDocuments({ userId });
 }
 
 // ============================================================
@@ -73,7 +70,7 @@ export async function countKeys(userId) {
 export async function updateQuota(keyId, quota) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await daiNaoKeysCol().updateOne(
+  const res = await col().updateOne(
     { _id },
     { $set: { quota, lastCheckedAt: new Date(), updatedAt: new Date() } }
   );
@@ -87,8 +84,17 @@ export async function updateQuota(keyId, quota) {
 export async function deleteKey(userId, keyId) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
-  const res = await daiNaoKeysCol().deleteOne({ _id, userId });
+  const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
+}
+
+// ============================================================
+// XÓA TẤT CẢ KEY ĐẠI NÃO CỦA 1 USER
+// ============================================================
+
+export async function deleteKeysByUser(userId) {
+  const res = await col().deleteMany({ userId });
+  return res.deletedCount;
 }
 
 // ============================================================

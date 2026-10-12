@@ -1,11 +1,15 @@
 // server/db/projects.js
 // Nhiệm vụ: Collection projects — dự án.
+// Không import từ file trung gian — đọc MongoDB từ global.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function projectsCol() {
-  return col(COLLECTIONS.projects);
+const COL_NAME = "projects";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
 // ============================================================
@@ -21,7 +25,7 @@ export async function createProject({ userId, name, description = "" }) {
     createdAt: now,
     updatedAt: now,
   };
-  const res = await projectsCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -38,16 +42,13 @@ export async function listProjects(userId, { search = "" } = {}) {
       { description: { $regex: k, $options: "i" } },
     ];
   }
-  return projectsCol()
-    .find(filter)
-    .sort({ createdAt: -1 })
-    .toArray();
+  return col().find(filter).sort({ createdAt: -1 }).toArray();
 }
 
 export async function getProject(userId, projectId) {
   const _id = toObjectId(projectId);
   if (!_id) return null;
-  return projectsCol().findOne({ _id, userId });
+  return col().findOne({ _id, userId });
 }
 
 // ============================================================
@@ -62,7 +63,7 @@ export async function updateProject(userId, projectId, { name, description }) {
   if (typeof name === "string") set.name = name;
   if (typeof description === "string") set.description = description;
 
-  const res = await projectsCol().updateOne({ _id, userId }, { $set: set });
+  const res = await col().updateOne({ _id, userId }, { $set: set });
   return res.modifiedCount > 0;
 }
 
@@ -73,8 +74,17 @@ export async function updateProject(userId, projectId, { name, description }) {
 export async function deleteProject(userId, projectId) {
   const _id = toObjectId(projectId);
   if (!_id) return false;
-  const res = await projectsCol().deleteOne({ _id, userId });
+  const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
+}
+
+// ============================================================
+// XÓA TẤT CẢ DỰ ÁN CỦA 1 USER (dùng khi xóa tài khoản)
+// ============================================================
+
+export async function deleteProjectsByUser(userId) {
+  const res = await col().deleteMany({ userId });
+  return res.deletedCount;
 }
 
 // ============================================================

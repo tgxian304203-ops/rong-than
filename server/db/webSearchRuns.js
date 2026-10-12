@@ -1,30 +1,16 @@
 // server/db/webSearchRuns.js
-// Nhiệm vụ: Collection webSearchRuns — lịch sử các lần BOSS tự tra Web.
-// Quy tắc dự án:
-//   - BOSS tự tra Web từ key dán ở phần giao diện dán key Web.
-//   - Không liên quan tới key Đại Não/Tiểu Não.
+// Nhiệm vụ: Collection webSearchRuns — lịch sử BOSS tra Web.
 
 import { ObjectId } from "mongodb";
-import { col, COLLECTIONS } from "./index.js";
 
-export function webSearchRunsCol() {
-  return col(COLLECTIONS.webSearchRuns);
+const COL_NAME = "webSearchRuns";
+
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
 }
 
-// ============================================================
-// GHI
-// ============================================================
-
-/**
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {string} p.provider       - "tavily" | "serpjet" | "brave"
- * @param {string} p.query
- * @param {Array}  p.results        - danh sách kết quả trả về
- * @param {"success"|"error"} p.status
- * @param {string} [p.error]
- */
 export async function saveRun({
   userId,
   conversationId,
@@ -34,7 +20,6 @@ export async function saveRun({
   status = "success",
   error = "",
 }) {
-  const now = new Date();
   const doc = {
     userId,
     conversationId: String(conversationId),
@@ -43,18 +28,14 @@ export async function saveRun({
     results,
     status,
     error,
-    createdAt: now,
+    createdAt: new Date(),
   };
-  const res = await webSearchRunsCol().insertOne(doc);
+  const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
 }
 
-// ============================================================
-// ĐỌC
-// ============================================================
-
 export async function listByConversation(conversationId) {
-  return webSearchRunsCol()
+  return col()
     .find({ conversationId: String(conversationId) })
     .sort({ createdAt: -1 })
     .toArray();
@@ -63,12 +44,8 @@ export async function listByConversation(conversationId) {
 export async function getRun(runId) {
   const _id = toObjectId(runId);
   if (!_id) return null;
-  return webSearchRunsCol().findOne({ _id });
+  return col().findOne({ _id });
 }
-
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
 
 function toObjectId(id) {
   try {
