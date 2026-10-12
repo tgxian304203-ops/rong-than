@@ -1,8 +1,6 @@
 // src/api/client.js
-// Nhiệm vụ: HTTP client nền cho toàn bộ API.
-// - Base URL
-// - Gắn X-User-Id (theo cách xác thực của dự án — không dùng JWT)
-// - Timeout 90 giây cho mỗi request
+// Nhiệm vụ: HTTP client nền.
+// Timeout 180s để đủ cho 3 tầng phân tích + lính + Sandbox.
 
 const BASE_URL =
   (typeof import.meta !== "undefined" &&
@@ -13,10 +11,9 @@ const BASE_URL =
 const USER_ID_STORAGE_KEY = "rong_than_user_id";
 
 // ============================================================
-// TIMEOUT
+// TIMEOUT — 180 giây (3 phút)
 // ============================================================
-
-const REQUEST_TIMEOUT_MS = 90000; // 90 giây
+const REQUEST_TIMEOUT_MS = 180000;
 
 // ============================================================
 // USER ID
@@ -92,7 +89,6 @@ export async function request(path, options = {}) {
     }
   }
 
-  // Kết hợp signal từ caller + timeout
   const timeoutCtrl = new AbortController();
   const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
 
@@ -113,10 +109,9 @@ export async function request(path, options = {}) {
     clearTimeout(timeoutId);
 
     if (err?.name === "AbortError") {
-      // Kiểm tra do timeout hay do caller hủy
       if (timeoutCtrl.signal.aborted) {
         throw new ApiError(
-          "Yêu cầu quá thời gian (90 giây). Vui lòng thử lại.",
+          "Yêu cầu quá thời gian (180 giây). Vui lòng thử lại.",
           { code: "TIMEOUT" }
         );
       }

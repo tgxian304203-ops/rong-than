@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Đọc 500 tin gần nhất làm ngữ cảnh. Ẩn vai trò nội bộ khi trả lời User.
+// Đọc 500 tin gần nhất. Phân tích 3 tầng. Ẩn vai trò nội bộ.
 
 import express from "express";
 import multer from "multer";
@@ -129,17 +129,18 @@ async function runBossPipeline({
   });
   if (!recv.ok) return { ok: false, error: recv.error };
 
-  // Đọc lịch sử (không gồm tin vừa gửi — vì nó vừa mới lưu)
+  // Đọc lịch sử (không gồm tin vừa gửi)
   const history = await loadConversationHistory(conversationId);
-  // Loại tin user vừa gửi (tin cuối) — để tránh trùng
   const historyForContext = history.slice(0, -1);
 
+  // Phân tích 3 tầng
   const analysis = await phanTichYeuCau({
     userId,
     conversationId,
     userRequest,
     userLabel,
     history: historyForContext,
+    signal,
   });
   if (!analysis.ok) return { ok: false, error: analysis.error };
 
@@ -323,7 +324,26 @@ async function runBossPipeline({
     ok: true,
     text: finalText,
     meta: {
-      analysis: analysis.analysis,
+      analysis: {
+        taskType: analysis.analysis.taskType,
+        goal: analysis.analysis.goal,
+        requirements: analysis.analysis.requirements,
+        constraints: analysis.analysis.constraints,
+        expectedOutput: analysis.analysis.expectedOutput,
+        length: analysis.analysis.length,
+        tone: analysis.analysis.tone,
+        targetAudience: analysis.analysis.targetAudience,
+        subtasks: analysis.analysis.subtasks,
+        risks: analysis.analysis.risks,
+        qualityCriteria: analysis.analysis.qualityCriteria,
+        matchesUserIntent: analysis.analysis.matchesUserIntent,
+        missingRequirements: analysis.analysis.missingRequirements,
+        suggestions: analysis.analysis.suggestions,
+        needWeb: analysis.analysis.needWeb,
+        needCode: analysis.analysis.needCode,
+        isRedo: analysis.analysis.isRedo,
+        inheritedTaskType: analysis.analysis.inheritedTaskType,
+      },
       sandbox: sandboxMeta,
       code: codeMeta,
       web: webContext ? { used: true } : null,
@@ -440,7 +460,6 @@ function buildBossPlanMessages({ userRequest, analysis, webContext, history = []
     },
   ];
 
-  // Thêm lịch sử hội thoại làm ngữ cảnh
   for (const m of history) {
     if (!m.text || !m.text.trim()) continue;
     const role = m.role === "ai" ? "assistant" : "user";
@@ -450,30 +469,32 @@ function buildBossPlanMessages({ userRequest, analysis, webContext, history = []
     });
   }
 
-  // Thêm yêu cầu hiện tại
   const lines = [
     "Yêu cầu hiện tại của User:",
     userRequest,
     "",
-    "Phân tích sơ bộ:",
-    `- Cần tra web: ${analysis.needWeb ? "có" : "không"}`,
-    `- Liên quan code: ${analysis.needCode ? "có" : "không"}`,
-    `- Loại nhiệm vụ: ${analysis.estimatedTaskType}`,
+    "Phân tích 3 tầng:",
+    `- taskType: ${analysis.taskType}`,
+    `- goal: ${analysis.goal}`,
+    `- needWeb: ${analysis.needWeb}`,
+    `- needCode: ${analysis.needCode}`,
   ];
 
-  if (analysis.isRedo) {
-    lines.push(`- Đây là yêu cầu CHỈNH SỬA LẠI từ nội dung trước`);
-    lines.push(`- taskType kế thừa: ${analysis.inheritedTaskType}`);
+  if (analysis.requirements?.length) {
+    lines.push(`- requirements: ${analysis.requirements.join("; ")}`);
   }
+  if (analysis.constraints?.length) {
+    lines.push(`- constraints: ${analysis.constraints.join("; ")}`);
+  }
+  if (analysis.length) lines.push(`- length: ${analysis.length}`);
+  if (analysis.tone) lines.push(`- tone: ${analysis.tone}`);
+  if (analysis.isRedo) lines.push(`- Đây là yêu cầu CHỈNH SỬA LẠI`);
 
   if (webContext) {
     lines.push("", "Dữ liệu Web:", webContext);
   }
 
-  lines.push(
-    "",
-    "Trả về kế hoạch xử lý ngắn gọn."
-  );
+  lines.push("", "Trả về kế hoạch xử lý ngắn gọn.");
 
   messages.push({ role: "user", content: lines.join("\n") });
 
@@ -491,11 +512,11 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
         "- KHÔNG dùng cụm 'Rõ thưa BOSS', 'Báo cáo BOSS', 'Xin chờ thị phi'.\n" +
         "- Trả lời tự nhiên, thân thiện, như đang trò chuyện với người dùng.\n" +
         "- Không dùng LaTeX hay ký hiệu $$.\n" +
-        "- Nếu User yêu cầu 'X chữ', phải đảm bảo đủ X chữ. Đếm trước khi trả lời.",
+        "- Nếu User yêu cầu 'X chữ', phải đảm bảo đủ X chữ. Đếm trước khi trả lời.\n" +
+        "- Nếu là code HTML/CSS/JS, trả về code chạy được, không mô tả.",
     },
   ];
 
-  // Thêm lịch sử hội thoại
   for (const m of history) {
     if (!m.text || !m.text.trim()) continue;
     const role = m.role === "ai" ? "assistant" : "user";
@@ -505,7 +526,6 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
     });
   }
 
-  // Yêu cầu hiện tại + format
   const lines = [
     "Yêu cầu hiện tại của User:",
     userRequest,
@@ -523,6 +543,11 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
 
   if (format.expectedOutput) {
     lines.push("", "Kết quả mong đợi:", format.expectedOutput);
+  }
+
+  if (format.qualityCriteria?.length) {
+    lines.push("", "Tiêu chí chất lượng:");
+    for (const c of format.qualityCriteria) lines.push(`- ${c}`);
   }
 
   if (webContext) {
