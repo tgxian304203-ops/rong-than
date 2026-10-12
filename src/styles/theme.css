@@ -1,0 +1,83 @@
+/* src/styles/theme.css
+   Nhiệm vụ: Biến màu, chữ, khoảng cách dùng chung toàn app.
+   Quy tắc: Tin nhắn AI chữ xanh lá, User chữ trắng.
+   Nền khung tin nhắn trong suốt ~50%. */
+
+:root {
+  /* ===== MÀU NỀN ===== */
+  --color-bg-base: #0a0a0a;
+  --color-bg-elevated: #141414;
+  --color-bg-overlay: rgba(0, 0, 0, 0.75);
+
+  /* ===== MÀU CHỮ ===== */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: rgba(255, 255, 255, 0.7);
+  --color-text-muted: rgba(255, 255, 255, 0.45);
+
+  /* ===== MÀU TIN NHẮN (theo quy tắc dự án) ===== */
+  --color-ai-text: #4ade80;           /* xanh lá cho tin AI */
+  --color-user-text: #ffffff;         /* trắng cho tin User */
+  --color-ai-bg: rgba(74, 222, 128, 0.08);   /* nền AI ~50% mờ */
+  --color-user-bg: rgba(255, 255, 255, 0.08); /* nền User ~50% mờ */
+
+  /* ===== MÀU TRẠNG THÁI ===== */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* ===== MÀU QUOTA KEY ===== */
+  --color-quota-ok: #f97316;    /* 🔥 còn quota */
+  --color-quota-out: #6b7280;   /* 😓 hết quota */
+
+  /* ===== VIỀN ===== */
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.24);
+
+  /* ===== CHỮ ===== */
+  --font-xs: 11px;
+  --font-sm: 13px;
+  --font-base: 15px;
+  --font-md: 16px;
+  --font-lg: 18px;
+  --font-xl: 22px;
+  --font-2xl: 28px;
+
+  /* ===== KHOẢNG CÁCH ===== */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ===== BO GÓC ===== */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* ===== BÓNG ===== */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* ===== CHIỀU CAO THÀNH PHẦN ===== */
+  --header-height: 52px;
+  --inputbar-min-height: 44px;
+  --inputbar-max-lines: 6;
+
+  /* ===== THỜI GIAN CHUYỂN ĐỘNG ===== */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ===== Z-INDEX ===== */
+  --z-header: 10;
+  --z-inputbar: 10;
+  --z-menu: 100;
+  --z-dialog: 200;
+  --z-toast: 300;
+}

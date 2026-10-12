@@ -1,0 +1,91 @@
+/* src/styles/glass.css
+   Nhiệm vụ: Hiệu ứng kính trong suốt ~50% cho khung tin nhắn,
+   menu, dialog — theo quy tắc giao diện dự án. */
+
+/* ===== KHUNG TIN NHẮN GLASS (nền trong suốt ~50%) ===== */
+.glass-bubble {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Tin AI */
+.glass-bubble-ai {
+  background-color: var(--color-ai-bg);
+  color: var(--color-ai-text);
+}
+
+/* Tin User */
+.glass-bubble-user {
+  background-color: var(--color-user-bg);
+  color: var(--color-user-text);
+}
+
+/* ===== MENU PHỦ TOÀN MÀN HÌNH GLASS ===== */
+.glass-menu {
+  background-color: rgba(10, 10, 10, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ===== DIALOG XÁC NHẬN ===== */
+.glass-dialog {
+  background-color: rgba(20, 20, 20, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ===== Ô NHẬP CHAT ===== */
+.glass-inputbar {
+  background-color: rgba(20, 20, 20, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+/* ===== CARD DỰ ÁN / KEY ===== */
+.glass-card {
+  background-color: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ===== HỖ TRỢ TRÌNH DUYỆT KHÔNG CÓ backdrop-filter ===== */
+@supports not (backdrop-filter: blur(10px)) {
+  .glass-bubble,
+  .glass-menu,
+  .glass-dialog,
+  .glass-inputbar,
+  .glass-card {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .glass-bubble-ai {
+    background-color: rgba(74, 222, 128, 0.12);
+  }
+
+  .glass-bubble-user {
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .glass-menu,
+  .glass-dialog {
+    background-color: rgba(20, 20, 20, 0.98);
+  }
+
+  .glass-inputbar {
+    background-color: rgba(20, 20, 20, 0.95);
+  }
+}

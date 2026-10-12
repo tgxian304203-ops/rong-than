@@ -1,0 +1,26 @@
+{
+  "name": "rong-than",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Rồng Thần - Trợ lý AI đa tầng (Đại Não / BOSS / Tiểu Não / Lính)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
