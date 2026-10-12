@@ -3,8 +3,9 @@
 //
 // QUY TẮC PHẦN 04, mục 2.G:
 //   - Thanh nhập cách bàn phím 1mm (~4px).
-//   - Luôn thêm margin-bottom 4px — đảm bảo khoảng cách kể cả
-//     khi bàn phím đóng hoặc mở.
+//
+// Cách làm: dùng window.visualViewport để phát hiện bàn phím mở.
+// Khi bàn phím mở → đẩy InputBar lên bằng transform translateY.
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
@@ -15,15 +16,63 @@ const MAX_LINES = 6;
 const LINE_HEIGHT = 22;
 const PADDING_Y = 22;
 
+// 1mm ≈ 3.78px → 4px
+const KEYBOARD_GAP_PX = 4;
+
 export default function InputBar({ onSend, sending = false, disabled = false }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const containerRef = useRef(null);
+
+  // ============================================================
+  // DETECT BÀN PHÍM — QUA visualViewport
+  // ============================================================
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const update = () => {
+      // Khoảng cách giữa đáy window.innerHeight và đáy visualViewport
+      // = chiều cao bàn phím (khi bàn phím mở).
+      const gap = window.innerHeight - (vv.height + vv.offsetTop);
+      setKeyboardOffset(gap > 0 ? gap : 0);
+    };
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  // ============================================================
+  // CUỘN TIN NHẮN KHI BÀN PHÍM MỞ
+  // ============================================================
+  useEffect(() => {
+    if (keyboardOffset > 0) {
+      // Đợi React render xong → cuộn xuống cuối
+      setTimeout(() => {
+        const el = document.querySelector(".scroll-y");
+        if (el && typeof el.scrollTop === "number") {
+          el.scrollTop = el.scrollHeight;
+        }
+      }, 100);
+    }
+  }, [keyboardOffset]);
 
   // ============================================================
   // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
@@ -84,24 +133,32 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   const canSend = !isBlankMessage(text, attachments) && !sending && !disabled;
 
+  // ============================================================
+  // TÍNH TOÁN KHOẢNG CÁCH ĐẨY LÊN
+  // ============================================================
+  // Nếu bàn phím mở → đẩy InputBar lên `keyboardOffset + 4px`.
+  // Nếu bàn phím đóng → giữ nguyên ở đáy.
+  const translateY = keyboardOffset > 0
+    ? -(keyboardOffset + KEYBOARD_GAP_PX)
+    : 0;
+
   return (
     <div
+      ref={containerRef}
       style={{
-        // ============================================================
-        // KHOẢNG CÁCH 1mm GIỮA THANH NHẬP VÀ BÀN PHÍM
-        // ============================================================
-        // 1mm ≈ 3.78px → dùng 4px.
-        // Cộng thêm env(safe-area-inset-bottom) cho iPhone tai thỏ.
-        // ============================================================
-        paddingBottom: "calc(4px + env(safe-area-inset-bottom, 0px))",
         position: "relative",
+        // Đẩy InputBar lên khi bàn phím mở
+        transform: `translateY(${translateY}px)`,
+        transition: "transform 0.15s ease-out",
+        paddingBottom: "4px",
         paddingLeft: "var(--space-2)",
         paddingRight: "var(--space-2)",
         paddingTop: "var(--space-2)",
         borderTop: "1px solid var(--color-border)",
-        backgroundColor: "rgba(10,10,10,0.75)",
+        backgroundColor: "rgba(10,10,10,0.95)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
+        zIndex: 20,
       }}
     >
       {/* INPUT ẨN */}
