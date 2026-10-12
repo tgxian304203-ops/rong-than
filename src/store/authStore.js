@@ -1,14 +1,22 @@
 // src/store/authStore.js
-// Nhiệm vụ: Quản lý trạng thái đăng nhập toàn app
-// - User hiện tại, token
-// - Đăng nhập / đăng ký / đăng xuất
-// - Đổi ID, đổi mật khẩu, xóa tài khoản
-// - Đồng bộ với api/auth.js và client.js
-// Dùng React Context để share toàn app.
+// Nhiệm vụ: Quản lý trạng thái đăng nhập toàn app.
+// Dự án KHÔNG dùng JWT — xác thực bằng cách lưu userId
+// và gửi kèm header X-User-Id cho mọi request.
 
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import * as authApi from "../api/auth.js";
-import { getToken, setToken, clearToken } from "../api/client.js";
+import {
+  getStoredUserId,
+  setStoredUserId,
+  clearStoredUserId,
+} from "../api/client.js";
 
 const AuthContext = createContext(null);
 
@@ -18,20 +26,21 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState(null);
 
   // ============================================================
-  // KHỞI ĐỘNG: kiểm tra token có sẵn
+  // KHỞI ĐỘNG: đọc userId đã lưu
   // ============================================================
   useEffect(() => {
     let cancelled = false;
 
     async function init() {
-      const token = getToken();
-      if (!token) {
+      const stored = getStoredUserId();
+      if (!stored) {
         if (!cancelled) {
           setUser(null);
           setLoading(false);
         }
         return;
       }
+
       try {
         const res = await authApi.me();
         if (!cancelled) {
@@ -39,7 +48,7 @@ export function AuthProvider({ children }) {
         }
       } catch {
         if (!cancelled) {
-          clearToken();
+          clearStoredUserId();
           setUser(null);
         }
       } finally {
@@ -60,54 +69,81 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       const res = await authApi.login({ userId, password });
-      if (res?.token) setToken(res.token);
-      setUser(res?.user || null);
+      if (res?.user?.userId) {
+        setStoredUserId(res.user.userId);
+        setUser(res.user);
+      }
       return { ok: true, user: res?.user };
     } catch (err) {
-      setError(err?.message || "Đăng nhập thất bại");
-      return { ok: false, error: err?.message || "Đăng nhập thất bại" };
+      const msg = err?.message || "Đăng nhập thất bại";
+      setError(msg);
+      return { ok: false, error: msg };
     }
   }, []);
 
   // ============================================================
   // ĐĂNG KÝ
   // ============================================================
-  const register = useCallback(async ({ userId, password, confirmPassword }) => {
-    setError(null);
-    try {
-      const res = await authApi.register({ userId, password, confirmPassword });
-      if (res?.token) setToken(res.token);
-      setUser(res?.user || null);
-      return { ok: true, user: res?.user };
-    } catch (err) {
-      setError(err?.message || "Đăng ký thất bại");
-      return { ok: false, error: err?.message || "Đăng ký thất bại" };
-    }
-  }, []);
+  const register = useCallback(
+    async ({ userId, password, confirmPassword }) => {
+      setError(null);
+      try {
+        const res = await authApi.register({
+          userId,
+          password,
+          confirmPassword,
+        });
+        if (res?.user?.userId) {
+          setStoredUserId(res.user.userId);
+          setUser(res.user);
+        }
+        return { ok: true, user: res?.user };
+      } catch (err) {
+        const msg = err?.message || "Đăng ký thất bại";
+        setError(msg);
+        return { ok: false, error: msg };
+      }
+    },
+    []
+  );
 
   // ============================================================
   // ĐĂNG XUẤT
   // ============================================================
   const logout = useCallback(async () => {
-    await authApi.logout();
+    try {
+      await authApi.logout();
+    } catch {
+      /* bỏ qua */
+    }
+    clearStoredUserId();
     setUser(null);
   }, []);
 
   // ============================================================
   // ĐỔI ID
   // ============================================================
-  const changeUserId = useCallback(async ({ currentPassword, newUserId }) => {
-    setError(null);
-    try {
-      const res = await authApi.changeUserId({ currentPassword, newUserId });
-      setUser((prev) => (prev ? { ...prev, userId: newUserId } : prev));
-      return { ok: true, user: res?.user };
-    } catch (err) {
-      const msg = err?.message || "Đổi ID thất bại";
-      setError(msg);
-      return { ok: false, error: msg };
-    }
-  }, []);
+  const changeUserId = useCallback(
+    async ({ currentPassword, newUserId }) => {
+      setError(null);
+      try {
+        const res = await authApi.changeUserId({
+          currentPassword,
+          newUserId,
+        });
+        if (res?.user?.userId) {
+          setStoredUserId(res.user.userId);
+          setUser(res.user);
+        }
+        return { ok: true, user: res?.user };
+      } catch (err) {
+        const msg = err?.message || "Đổi ID thất bại";
+        setError(msg);
+        return { ok: false, error: msg };
+      }
+    },
+    []
+  );
 
   // ============================================================
   // ĐỔI MẬT KHẨU
@@ -134,19 +170,22 @@ export function AuthProvider({ children }) {
   // ============================================================
   // XÓA TÀI KHOẢN
   // ============================================================
-  const deleteAccount = useCallback(async ({ currentPassword, confirmText }) => {
-    setError(null);
-    try {
-      await authApi.deleteAccount({ currentPassword, confirmText });
-      setUser(null);
-      clearToken();
-      return { ok: true };
-    } catch (err) {
-      const msg = err?.message || "Xóa tài khoản thất bại";
-      setError(msg);
-      return { ok: false, error: msg };
-    }
-  }, []);
+  const deleteAccount = useCallback(
+    async ({ currentPassword, confirmText }) => {
+      setError(null);
+      try {
+        await authApi.deleteAccount({ currentPassword, confirmText });
+        clearStoredUserId();
+        setUser(null);
+        return { ok: true };
+      } catch (err) {
+        const msg = err?.message || "Xóa tài khoản thất bại";
+        setError(msg);
+        return { ok: false, error: msg };
+      }
+    },
+    []
+  );
 
   const value = useMemo(
     () => ({
@@ -161,10 +200,22 @@ export function AuthProvider({ children }) {
       changePassword,
       deleteAccount,
     }),
-    [user, loading, error, login, register, logout, changeUserId, changePassword, deleteAccount]
+    [
+      user,
+      loading,
+      error,
+      login,
+      register,
+      logout,
+      changeUserId,
+      changePassword,
+      deleteAccount,
+    ]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

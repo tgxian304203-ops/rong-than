@@ -7,6 +7,7 @@
 //   - Thẻ dự án: tên + mô tả + nút × xóa
 //   - Xóa phải xác nhận
 //   - KHÔNG tạo dữ liệu giả khi backend chưa xác nhận
+//   - KHÔNG dùng window.prompt (không phù hợp mobile)
 
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -32,6 +33,13 @@ export default function ProjectsList() {
 
   const [creating, setCreating] = useState(false);
 
+  // Modal tạo dự án (dùng state — không dùng window.prompt)
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
@@ -46,16 +54,43 @@ export default function ProjectsList() {
     else showToast(res?.error || "Xóa dự án thất bại", "error", 4000);
   };
 
-  const handleCreate = async () => {
-    const name = window.prompt("Nhập tên dự án mới:");
-    if (!name || !name.trim()) return;
+  const openCreateModal = () => {
+    setNewName("");
+    setNewDesc("");
+    setFormError("");
+    setCreateModalOpen(true);
+  };
 
-    setCreating(true);
-    const res = await createProject({ name: name.trim(), description: "" });
-    setCreating(false);
+  const closeCreateModal = () => {
+    if (submitting) return;
+    setCreateModalOpen(false);
+  };
 
-    if (res?.ok) showToast("Đã tạo dự án", "success", 2000);
-    else showToast(res?.error || "Tạo dự án thất bại", "error", 4000);
+  const handleCreateSubmit = async () => {
+    setFormError("");
+    const name = newName.trim();
+    if (!name) {
+      setFormError("Tên dự án không được để trống");
+      return;
+    }
+    if (name.length > 80) {
+      setFormError("Tên dự án không vượt quá 80 ký tự");
+      return;
+    }
+
+    setSubmitting(true);
+    const res = await createProject({
+      name,
+      description: newDesc.trim(),
+    });
+    setSubmitting(false);
+
+    if (res?.ok) {
+      showToast("Đã tạo dự án", "success", 2000);
+      setCreateModalOpen(false);
+    } else {
+      setFormError(res?.error || "Tạo dự án thất bại");
+    }
   };
 
   return (
@@ -91,7 +126,7 @@ export default function ProjectsList() {
           </h1>
           <button
             type="button"
-            onClick={handleCreate}
+            onClick={openCreateModal}
             disabled={creating}
             aria-label="Tạo dự án mới"
             className="no-select glass-card"
@@ -150,11 +185,7 @@ export default function ProjectsList() {
         ) : filteredProjects.length === 0 ? (
           <EmptyState
             icon="📁"
-            title={
-              search
-                ? "Không tìm thấy dự án phù hợp"
-                : "Chưa có dự án nào"
-            }
+            title={search ? "Không tìm thấy dự án phù hợp" : "Chưa có dự án nào"}
             subtitle={search ? "" : "Nhấn ＋ để tạo dự án mới"}
           />
         ) : (
@@ -176,6 +207,157 @@ export default function ProjectsList() {
           </div>
         )}
       </div>
+
+      {/* MODAL TẠO DỰ ÁN */}
+      {createModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tạo dự án mới"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: "var(--z-dialog)",
+            backgroundColor: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "var(--space-4)",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeCreateModal();
+          }}
+        >
+          <div
+            className="glass-dialog"
+            style={{
+              width: "100%",
+              maxWidth: 460,
+              padding: "var(--space-5)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-3)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "var(--font-lg)",
+                fontWeight: 700,
+                color: "var(--color-text-primary)",
+              }}
+            >
+              Tạo dự án mới
+            </div>
+
+            <div>
+              <div
+                style={{
+                  fontSize: "var(--font-sm)",
+                  color: "var(--color-text-secondary)",
+                  marginBottom: "var(--space-2)",
+                }}
+              >
+                Tên dự án
+              </div>
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Nhập tên dự án..."
+                autoFocus
+                className="glass-card"
+                style={{
+                  width: "100%",
+                  height: 46,
+                  padding: "0 var(--space-3)",
+                  color: "var(--color-text-primary)",
+                  fontSize: "var(--font-base)",
+                }}
+              />
+            </div>
+
+            <div>
+              <div
+                style={{
+                  fontSize: "var(--font-sm)",
+                  color: "var(--color-text-secondary)",
+                  marginBottom: "var(--space-2)",
+                }}
+              >
+                Mô tả (không bắt buộc)
+              </div>
+              <input
+                type="text"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+                placeholder="Mô tả ngắn..."
+                className="glass-card"
+                style={{
+                  width: "100%",
+                  height: 46,
+                  padding: "0 var(--space-3)",
+                  color: "var(--color-text-primary)",
+                  fontSize: "var(--font-base)",
+                }}
+              />
+            </div>
+
+            {formError ? (
+              <div
+                style={{
+                  color: "var(--color-error)",
+                  fontSize: "var(--font-sm)",
+                  textAlign: "center",
+                }}
+              >
+                {formError}
+              </div>
+            ) : null}
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "var(--space-2)",
+                marginTop: "var(--space-2)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={closeCreateModal}
+                disabled={submitting}
+                className="no-select"
+                style={{
+                  minHeight: 44,
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border-strong)",
+                  color: "var(--color-text-primary)",
+                  fontSize: "var(--font-base)",
+                  fontWeight: 600,
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateSubmit}
+                disabled={submitting}
+                className="no-select"
+                style={{
+                  minHeight: 44,
+                  borderRadius: "var(--radius-md)",
+                  backgroundColor: "var(--color-success)",
+                  color: "#04150a",
+                  fontSize: "var(--font-base)",
+                  fontWeight: 700,
+                }}
+              >
+                {submitting ? "Đang tạo…" : "Tạo dự án"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

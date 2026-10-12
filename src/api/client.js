@@ -1,7 +1,7 @@
 // src/api/client.js
 // Nhiệm vụ: HTTP client nền cho toàn bộ API
 // - Base URL
-// - Gắn token xác thực
+// - Gắn X-User-Id (theo cách xác thực của dự án — không dùng JWT)
 // - Xử lý JSON
 // - Chuẩn hóa lỗi
 // - Không báo thành công khi backend chưa xác nhận
@@ -12,32 +12,32 @@ const BASE_URL =
     import.meta.env.VITE_API_BASE_URL) ||
   "/api";
 
-const TOKEN_STORAGE_KEY = "rong_than_token";
+const USER_ID_STORAGE_KEY = "rong_than_user_id";
 
 // ============================================================
-// TOKEN
+// USER ID (thay cho token — dự án không dùng JWT)
 // ============================================================
 
-export function getToken() {
+export function getStoredUserId() {
   try {
-    return localStorage.getItem(TOKEN_STORAGE_KEY) || null;
+    return localStorage.getItem(USER_ID_STORAGE_KEY) || null;
   } catch {
     return null;
   }
 }
 
-export function setToken(token) {
+export function setStoredUserId(userId) {
   try {
-    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+    if (userId) localStorage.setItem(USER_ID_STORAGE_KEY, String(userId));
+    else localStorage.removeItem(USER_ID_STORAGE_KEY);
   } catch {
     /* ignore */
   }
 }
 
-export function clearToken() {
+export function clearStoredUserId() {
   try {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_ID_STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -61,17 +61,6 @@ export class ApiError extends Error {
 // REQUEST
 // ============================================================
 
-/**
- * Gọi API.
- * @param {string} path - ví dụ "/auth/login"
- * @param {object} options
- * @param {string} [options.method]
- * @param {object} [options.body]
- * @param {object} [options.headers]
- * @param {AbortSignal} [options.signal]
- * @param {boolean} [options.isFormData]
- * @returns {Promise<any>} dữ liệu JSON đã parse
- */
 export async function request(path, options = {}) {
   const {
     method = "GET",
@@ -84,10 +73,10 @@ export async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const finalHeaders = { ...headers };
 
-  // Token
-  const token = getToken();
-  if (token) {
-    finalHeaders["Authorization"] = `Bearer ${token}`;
+  // Gắn X-User-Id (backend đọc header này để biết user)
+  const userId = getStoredUserId();
+  if (userId) {
+    finalHeaders["X-User-Id"] = userId;
   }
 
   // Body
@@ -148,9 +137,9 @@ export async function request(path, options = {}) {
     const details =
       (data && typeof data === "object" && data.details) || null;
 
-    // Token hết hạn → xóa token
+    // 401 → xóa user id
     if (res.status === 401) {
-      clearToken();
+      clearStoredUserId();
     }
 
     throw new ApiError(message, { status: res.status, code, details });
@@ -173,7 +162,12 @@ export const api = {
     request(path, { ...options, method: "PATCH", body }),
   del: (path, options) => request(path, { ...options, method: "DELETE" }),
   upload: (path, formData, options) =>
-    request(path, { ...options, method: "POST", body: formData, isFormData: true }),
+    request(path, {
+      ...options,
+      method: "POST",
+      body: formData,
+      isFormData: true,
+    }),
 };
 
 export default api;
