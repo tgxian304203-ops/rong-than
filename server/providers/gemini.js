@@ -1,5 +1,6 @@
 // server/providers/gemini.js
 // Nhiệm vụ: Kết nối Gemini (Google Generative Language API).
+// Hỗ trợ cả 2 loại key: AIza (cũ) và AQ. (auth key mới).
 
 import { MODEL_PROVIDERS } from "../config/providers.js";
 import { LIMITS } from "../config/limits.js";
@@ -46,10 +47,6 @@ export async function verifyKey(rawKey) {
 // GỌI CHAT
 // ============================================================
 
-/**
- * Gemini dùng format contents khác OpenAI.
- * Ta map messages → contents.
- */
 export async function chat({
   rawKey,
   model,

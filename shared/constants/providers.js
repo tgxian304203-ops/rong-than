@@ -1,10 +1,8 @@
 // shared/constants/providers.js
 // Nhiệm vụ: Hằng số nhà cung cấp model.
-// Khớp với đặc tả dự án:
-//   - Model: Groq, Gemini, OpenRouter
-//   - Prefix nhận diện key
-//   - Base URL API
-// KHÔNG tự đổi tên nhà cung cấp.
+// Hỗ trợ cả 2 prefix của Gemini:
+//   - "AIza" — key cũ
+//   - "AQ."  — key mới (auth key, từ 28/05/2026)
 
 export const MODEL_PROVIDERS = {
   groq: {
@@ -18,7 +16,8 @@ export const MODEL_PROVIDERS = {
   gemini: {
     id: "gemini",
     name: "Gemini",
-    prefix: "AIza",
+    prefixes: ["AIza", "AQ."],
+    prefix: "AIza", // giữ để tương thích code cũ
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     verifyPath: "/models",
     modelsPath: "models",
@@ -39,10 +38,24 @@ export function getModelProvider(id) {
   return MODEL_PROVIDERS[id] || null;
 }
 
+/**
+ * Kiểm tra key có khớp prefix của provider không.
+ * Hỗ trợ cả trường hợp provider có 1 prefix (string) hoặc nhiều (array).
+ */
+export function keyMatchesProvider(key, providerId) {
+  if (!key || typeof key !== "string") return false;
+  const p = MODEL_PROVIDERS[providerId];
+  if (!p) return false;
+  const list = Array.isArray(p.prefixes) ? p.prefixes : [p.prefix];
+  return list.some((prefix) => key.startsWith(prefix));
+}
+
 export function detectModelProviderByPrefix(key) {
   if (!key || typeof key !== "string") return null;
   for (const id of MODEL_PROVIDER_IDS) {
-    if (key.startsWith(MODEL_PROVIDERS[id].prefix)) return id;
+    const p = MODEL_PROVIDERS[id];
+    const list = Array.isArray(p.prefixes) ? p.prefixes : [p.prefix];
+    if (list.some((prefix) => key.startsWith(prefix))) return id;
   }
   return null;
 }
@@ -51,5 +64,6 @@ export default {
   MODEL_PROVIDERS,
   MODEL_PROVIDER_IDS,
   getModelProvider,
+  keyMatchesProvider,
   detectModelProviderByPrefix,
 };

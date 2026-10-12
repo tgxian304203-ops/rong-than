@@ -1,10 +1,15 @@
 // shared/validators/keyRules.js
 // Nhiệm vụ: Quy tắc kiểm tra API Key (chỉ dạng, không gọi mạng).
-// Phân loại provider dựa trên prefix.
-// Dùng chung cho cả frontend và backend.
+// Hỗ trợ Gemini cả prefix "AIza" (cũ) và "AQ." (mới).
 
-import { MODEL_PROVIDERS, MODEL_PROVIDER_IDS } from "../constants/providers.js";
-import { WEB_PROVIDERS, WEB_PROVIDER_IDS } from "../constants/webProviders.js";
+import {
+  MODEL_PROVIDERS,
+  MODEL_PROVIDER_IDS,
+} from "../constants/providers.js";
+import {
+  WEB_PROVIDERS,
+  WEB_PROVIDER_IDS,
+} from "../constants/webProviders.js";
 
 // ============================================================
 // QUY TẮC
@@ -14,19 +19,23 @@ const KEY_RULES = [
   // Model providers
   ...MODEL_PROVIDER_IDS.map((id) => {
     const p = MODEL_PROVIDERS[id];
+    const prefixes = Array.isArray(p.prefixes) ? p.prefixes : [p.prefix];
     return {
       provider: id,
-      prefix: p.prefix,
-      minLength: id === "gemini" ? 35 : 40,
+      prefixes,
+      prefix: prefixes[0], // để tương thích
+      minLength: id === "gemini" ? 20 : 40,
       kind: "model",
     };
   }),
   // Web providers
   ...WEB_PROVIDER_IDS.map((id) => {
     const p = WEB_PROVIDERS[id];
+    const prefixes = Array.isArray(p.prefixes) ? p.prefixes : [p.prefix];
     return {
       provider: id,
-      prefix: p.prefix,
+      prefixes,
+      prefix: prefixes[0],
       minLength: id === "serpjet" ? 20 : 30,
       kind: "web",
     };
@@ -39,15 +48,13 @@ export const KEY_RULES_LIST = KEY_RULES;
 // NHẬN DIỆN
 // ============================================================
 
-/**
- * Nhận diện provider từ key (theo prefix).
- * @returns {string|null}
- */
 export function detectProviderFromKey(key) {
   if (!key || typeof key !== "string") return null;
   const trimmed = key.trim();
   for (const rule of KEY_RULES) {
-    if (trimmed.startsWith(rule.prefix)) return rule.provider;
+    if (rule.prefixes.some((p) => trimmed.startsWith(p))) {
+      return rule.provider;
+    }
   }
   return null;
 }
@@ -56,7 +63,9 @@ export function detectKindFromKey(key) {
   if (!key || typeof key !== "string") return null;
   const trimmed = key.trim();
   for (const rule of KEY_RULES) {
-    if (trimmed.startsWith(rule.prefix)) return rule.kind;
+    if (rule.prefixes.some((p) => trimmed.startsWith(p))) {
+      return rule.kind;
+    }
   }
   return null;
 }
@@ -65,14 +74,6 @@ export function detectKindFromKey(key) {
 // KIỂM TRA
 // ============================================================
 
-/**
- * Kiểm tra định dạng API key.
- * @param {string} key
- * @param {object} [opts]
- * @param {string} [opts.expectedKind]      - "model" | "web"
- * @param {string} [opts.expectedProvider]  - ví dụ "groq" | "tavily"
- * @returns {{ok: boolean, provider?: string, kind?: string, error?: string}}
- */
 export function validateApiKeyFormat(key, opts = {}) {
   if (!key || typeof key !== "string") {
     return { ok: false, error: "API Key không được để trống" };
@@ -132,9 +133,13 @@ export function maskApiKey(key) {
   const trimmed = key.trim();
   const provider = detectProviderFromKey(trimmed);
   const rule = KEY_RULES.find((r) => r.provider === provider);
-  if (rule && trimmed.startsWith(rule.prefix)) {
-    return `${rule.prefix}••••`;
+
+  if (rule) {
+    for (const p of rule.prefixes) {
+      if (trimmed.startsWith(p)) return `${p}••••`;
+    }
   }
+
   if (trimmed.length <= 4) return "••••";
   return `${trimmed.slice(0, 4)}••••`;
 }
