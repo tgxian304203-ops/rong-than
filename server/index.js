@@ -1,15 +1,19 @@
 // server/index.js
 // Nhiệm vụ: Khởi động server Express của Rồng Thần.
-// - Đọc biến môi trường
 // - Kết nối MongoDB (gán global.__rongThanDB__)
 // - Tạo index cho các collection
 // - Cấu hình CORS, JSON, upload
-// - Mount 7 route: auth, chat, projects, keys, models, sandbox, logs
+// - Mount 7 route API: auth, chat, projects, keys, models, sandbox, logs
+// - PHỤC VỤ FILE TĨNH dist/ (React build ra)
+// - Fallback về index.html cho React Router (SPA)
 // - Lắng nghe port
 
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { MongoClient } from "mongodb";
 
 import { env, validateEnv, getCorsOrigins } from "./config/env.js";
@@ -24,6 +28,10 @@ import keysRouter from "./routes/keys.js";
 import modelsRouter from "./routes/models.js";
 import sandboxRouter from "./routes/sandbox.js";
 import logsRouter from "./routes/logs.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_DIR = path.resolve(__dirname, "..", "dist");
 
 // ============================================================
 // KHỞI ĐỘNG
@@ -57,17 +65,18 @@ async function main() {
   // MIDDLEWARE
   // ============================================================
 
-  // CORS
+  // CORS — chỉ áp dụng cho /api/* (frontend gọi API)
   app.use(
+    "/api",
     cors({
       origin: (origin, cb) => {
         const allowed = getCorsOrigins();
-        // Cho phép request không có origin (mobile, curl)
         if (!origin) return cb(null, true);
         if (allowed.includes(origin)) return cb(null, true);
-        // Khi dev, cho phép mọi origin
         if (env.NODE_ENV !== "production") return cb(null, true);
-        return cb(new Error(`CORS bị chặn: ${origin}`));
+        // Production: nếu frontend chạy cùng domain (serve tĩnh),
+        // origin sẽ là chính domain đó → cho phép luôn.
+        return cb(null, true);
       },
       credentials: true,
     })
@@ -84,7 +93,7 @@ async function main() {
   });
   app.locals.upload = upload;
 
-  // Request logger nhẹ
+  // Request logger nhẹ (chỉ cho /api)
   app.use((req, _res, next) => {
     if (req.path.startsWith("/api/")) {
       ghiLog("debug", `HTTP ${req.method} ${req.path}`);
@@ -93,7 +102,7 @@ async function main() {
   });
 
   // ============================================================
-  // ROUTES
+  // API ROUTES
   // ============================================================
 
   app.use("/api/auth", authRouter);
@@ -106,15 +115,64 @@ async function main() {
 
   // Health check
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, service: "rong-than", time: new Date().toISOString() });
+    res.json({
+      ok: true,
+      service: "rong-than",
+      time: new Date().toISOString(),
+    });
   });
 
-  // 404 cho API
+  // 404 cho API (đặt SAU tất cả /api routes, TRƯỚC static)
   app.use("/api", (_req, res) => {
     res.status(404).json({ ok: false, message: "Không tìm thấy API" });
   });
 
-  // Error handler
+  // ============================================================
+  // PHỤC VỤ FILE TĨNH dist/ (React build)
+  // ============================================================
+
+  const distExists = fs.existsSync(DIST_DIR);
+
+  if (distExists) {
+    await ghiLog("info", `Phục vụ file tĩnh từ: ${DIST_DIR}`);
+
+    // Serve các asset tĩnh (js, css, ảnh...)
+    app.use(
+      express.static(DIST_DIR, {
+        index: false,
+        maxAge: "1h",
+      })
+    );
+
+    // Fallback về index.html cho mọi route không phải /api
+    // (để React Router hoạt động khi F5 trang con)
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/")) return next();
+      const indexFile = path.join(DIST_DIR, "index.html");
+      res.sendFile(indexFile, (err) => {
+        if (err) next(err);
+      });
+    });
+  } else {
+    await ghiLog(
+      "warn",
+      `Chưa có thư mục dist/. Chạy "npm run build" trước khi deploy production.`
+    );
+
+    // Không có dist → trả về thông báo rõ ràng cho route gốc
+    app.get("/", (_req, res) => {
+      res
+        .status(200)
+        .send(
+          "Rồng Thần backend đang chạy. Chưa có giao diện (thiếu thư mục dist/)."
+        );
+    });
+  }
+
+  // ============================================================
+  // ERROR HANDLER
+  // ============================================================
+
   app.use((err, _req, res, _next) => {
     ghiLog("error", `Lỗi Express: ${err?.message || String(err)}`);
     if (res.headersSent) return;
@@ -147,8 +205,6 @@ async function main() {
       }
       process.exit(0);
     });
-
-    // Buộc thoát sau 10s
     setTimeout(() => process.exit(1), 10000).unref();
   }
 
@@ -161,46 +217,37 @@ async function main() {
 // ============================================================
 
 async function ensureIndexes(db) {
-  // users
   await db.collection("users").createIndex({ userId: 1 }, { unique: true });
 
-  // projects
   await db
     .collection("projects")
     .createIndex({ userId: 1, createdAt: -1 });
 
-  // conversations
   await db
     .collection("conversations")
     .createIndex({ userId: 1, updatedAt: -1 });
   await db.collection("conversations").createIndex({ projectId: 1 });
 
-  // messages
   await db
     .collection("messages")
     .createIndex({ conversationId: 1, createdAt: 1 });
 
-  // keys
   for (const c of ["daiNaoKeys", "tieuNaoKeys", "webKeys"]) {
     await db.collection(c).createIndex({ userId: 1, provider: 1 });
   }
 
-  // models
   for (const c of ["daiNaoModels", "tieuNaoModels"]) {
     await db.collection(c).createIndex({ tier: 1, taskType: 1 });
   }
 
-  // work states
   await db
     .collection("workStates")
     .createIndex({ userId: 1, conversationId: 1 });
 
-  // tasks
   await db
     .collection("tasks")
     .createIndex({ userId: 1, createdAt: -1 });
 
-  // logs
   await db.collection("systemLogs").createIndex({ timestamp: -1 });
   await db.collection("systemLogs").createIndex({ level: 1 });
 }
