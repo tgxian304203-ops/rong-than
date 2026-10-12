@@ -2,10 +2,9 @@
 // Nhiệm vụ: Thanh nhập tin nhắn + tệp đính kèm.
 //
 // QUY TẮC PHẦN 04, mục 2.G:
-//   - Khi bàn phím mở, thanh nhập cách bàn phím 1mm (~4px).
-//   - Khi bàn phím đóng, thanh nhập về đáy màn hình.
-//
-// Phát hiện bàn phím qua window.visualViewport (Chrome/Safari mobile).
+//   - Thanh nhập cách bàn phím 1mm (~4px).
+//   - Luôn thêm margin-bottom 4px — đảm bảo khoảng cách kể cả
+//     khi bàn phím đóng hoặc mở.
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
@@ -20,53 +19,11 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
-
-  // ============================================================
-  // PHÁT HIỆN BÀN PHÍM MỞ/ĐÓNG
-  // ============================================================
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const vv = window.visualViewport;
-    if (!vv) {
-      // Fallback: dùng window.innerHeight
-      const onResize = () => {
-        const h = window.innerHeight;
-        const fullH = window.screen.height;
-        setKeyboardOpen(h < fullH * 0.75);
-      };
-      window.addEventListener("resize", onResize);
-      onResize();
-      return () => window.removeEventListener("resize", onResize);
-    }
-
-    let initialHeight = vv.height;
-
-    const onResize = () => {
-      // Nếu viewport giảm > 150px → bàn phím mở
-      const diff = initialHeight - vv.height;
-      setKeyboardOpen(diff > 150);
-    };
-
-    const onScroll = () => {
-      // iOS: khi bàn phím mở, visualViewport.offsetTop > 0
-      setKeyboardOpen(vv.offsetTop > 0 || vv.height < initialHeight - 150);
-    };
-
-    vv.addEventListener("resize", onResize);
-    vv.addEventListener("scroll", onScroll);
-
-    return () => {
-      vv.removeEventListener("resize", onResize);
-      vv.removeEventListener("scroll", onScroll);
-    };
-  }, []);
 
   // ============================================================
   // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
@@ -129,14 +86,20 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   return (
     <div
-      className={keyboardOpen ? "inputbar-keyboard-gap" : "inputbar-no-keyboard"}
       style={{
+        // ============================================================
+        // KHOẢNG CÁCH 1mm GIỮA THANH NHẬP VÀ BÀN PHÍM
+        // ============================================================
+        // 1mm ≈ 3.78px → dùng 4px.
+        // Cộng thêm env(safe-area-inset-bottom) cho iPhone tai thỏ.
+        // ============================================================
+        paddingBottom: "calc(4px + env(safe-area-inset-bottom, 0px))",
         position: "relative",
         paddingLeft: "var(--space-2)",
         paddingRight: "var(--space-2)",
         paddingTop: "var(--space-2)",
         borderTop: "1px solid var(--color-border)",
-        backgroundColor: "rgba(10,10,10,0.6)",
+        backgroundColor: "rgba(10,10,10,0.75)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
       }}
