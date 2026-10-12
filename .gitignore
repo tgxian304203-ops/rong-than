@@ -31,13 +31,14 @@ build/
 .vite/
 
 # ============================================================
-# LOGS
+# LOGS — CHỈ bỏ qua log ở GỐC repo, KHÔNG bỏ qua server/logs/
+# Quan trọng: dấu "/" ở đầu dòng "/logs/" giới hạn phạm vi
+# chỉ ở gốc repo — không đụng tới server/logs/
 # ============================================================
-logs/
+/logs/
 *.log
-npm-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+!server/logs/
+!server/logs/**
 
 # ============================================================
 # OS / EDITOR
