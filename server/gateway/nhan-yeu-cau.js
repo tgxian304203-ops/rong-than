@@ -1,8 +1,12 @@
 // server/gateway/nhan-yeu-cau.js
 // Nhiệm vụ: Rồng Thần nhận yêu cầu từ User.
+// Đổi tên hội thoại nếu là tin nhắn đầu tiên.
 
 import { createMessage } from "../db/messages.js";
-import { touchConversation } from "../db/conversations.js";
+import {
+  touchConversation,
+  updateTitleIfDefault,
+} from "../db/conversations.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
 
 export async function nhanYeuCau({
@@ -38,6 +42,16 @@ export async function nhanYeuCau({
       attachments,
       meta: null,
     });
+
+    // Đổi tên hội thoại nếu đang dùng tên mặc định
+    // Dùng text đầu tiên (hoặc tên tệp nếu chỉ có tệp)
+    if (hasText) {
+      await updateTitleIfDefault(conversationId, text.trim());
+    } else if (hasAttach) {
+      const firstAtt = attachments[0];
+      const name = firstAtt?.name || firstAtt?.originalname || "Tệp đính kèm";
+      await updateTitleIfDefault(conversationId, name);
+    }
 
     await touchConversation(conversationId);
 

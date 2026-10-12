@@ -1,8 +1,5 @@
 // server/routes/projects.js
 // Nhiệm vụ: API dự án.
-// Quy tắc dự án (PHẦN 04, mục 6, 7):
-//   - Danh sách, tạo, mở, tìm kiếm, xóa dự án
-//   - Tạo & quản lý cuộc trò chuyện trong dự án
 
 import express from "express";
 import {
@@ -179,7 +176,6 @@ router.delete("/:projectId/conversations/:conversationId", async (req, res) => {
 
     const { projectId, conversationId } = req.params;
 
-    // Kiểm tra hội thoại thuộc đúng dự án + user
     const convo = await getConversation(userId, conversationId);
     if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" });
     if (String(convo.projectId) !== String(projectId)) {

@@ -1,10 +1,10 @@
 // server/db/conversations.js
 // Nhiệm vụ: Collection conversations — cuộc trò chuyện.
-// Lịch sử gần đây hiển thị tối đa 10 mục nhưng KHÔNG xóa cũ.
 
 import { ObjectId } from "mongodb";
 
 const COL_NAME = "conversations";
+const DEFAULT_TITLE = "Cuộc trò chuyện mới";
 
 function col() {
   const db = global.__rongThanDB__;
@@ -25,12 +25,12 @@ export async function createConversation({
   const doc = {
     userId,
     projectId: projectId ? String(projectId) : null,
-    title: title || "Cuộc trò chuyện mới",
+    title: title || DEFAULT_TITLE,
     createdAt: now,
     updatedAt: now,
   };
   const res = await col().insertOne(doc);
-  return { ...doc, _id: res.insertedId };
+  return { ...doc, _id: res.insertedId, id: String(res.insertedId) };
 }
 
 // ============================================================
@@ -40,22 +40,26 @@ export async function createConversation({
 export async function getConversation(userId, conversationId) {
   const _id = toObjectId(conversationId);
   if (!_id) return null;
-  return col().findOne({ _id, userId });
+  const doc = await col().findOne({ _id, userId });
+  if (!doc) return null;
+  return { ...doc, id: String(doc._id) };
 }
 
 export async function listConversationsByProject(userId, projectId) {
-  return col()
+  const items = await col()
     .find({ userId, projectId: String(projectId) })
     .sort({ updatedAt: -1 })
     .toArray();
+  return items.map((it) => ({ ...it, id: String(it._id) }));
 }
 
 export async function listRecentConversations(userId, { limit = 10 } = {}) {
-  return col()
+  const items = await col()
     .find({ userId })
     .sort({ updatedAt: -1 })
     .limit(limit)
     .toArray();
+  return items.map((it) => ({ ...it, id: String(it._id) }));
 }
 
 // ============================================================
@@ -82,6 +86,27 @@ export async function updateConversationTitle(conversationId, title) {
   return res.modifiedCount > 0;
 }
 
+/**
+ * Đổi tên hội thoại nếu đang dùng tên mặc định.
+ * Dùng khi user gửi tin nhắn đầu tiên.
+ */
+export async function updateTitleIfDefault(conversationId, newTitle) {
+  const _id = toObjectId(conversationId);
+  if (!_id) return false;
+
+  const trimmed = String(newTitle || "").trim();
+  if (!trimmed) return false;
+
+  // Cắt tối đa 60 ký tự
+  const title = trimmed.length > 60 ? trimmed.slice(0, 57) + "…" : trimmed;
+
+  const res = await col().updateOne(
+    { _id, title: DEFAULT_TITLE },
+    { $set: { title, updatedAt: new Date() } }
+  );
+  return res.modifiedCount > 0;
+}
+
 // ============================================================
 // XÓA
 // ============================================================
@@ -100,10 +125,6 @@ export async function deleteConversationsByProject(userId, projectId) {
   });
   return res.deletedCount;
 }
-
-// ============================================================
-// XÓA TẤT CẢ HỘI THOẠI CỦA 1 USER
-// ============================================================
 
 export async function deleteConversationsByUser(userId) {
   const res = await col().deleteMany({ userId });

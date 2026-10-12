@@ -1,6 +1,5 @@
 // server/db/projects.js
 // Nhiệm vụ: Collection projects — dự án.
-// Không import từ file trung gian — đọc MongoDB từ global.
 
 import { ObjectId } from "mongodb";
 
@@ -26,7 +25,7 @@ export async function createProject({ userId, name, description = "" }) {
     updatedAt: now,
   };
   const res = await col().insertOne(doc);
-  return { ...doc, _id: res.insertedId };
+  return { ...doc, _id: res.insertedId, id: String(res.insertedId) };
 }
 
 // ============================================================
@@ -42,13 +41,19 @@ export async function listProjects(userId, { search = "" } = {}) {
       { description: { $regex: k, $options: "i" } },
     ];
   }
-  return col().find(filter).sort({ createdAt: -1 }).toArray();
+  const items = await col()
+    .find(filter)
+    .sort({ createdAt: -1 })
+    .toArray();
+  return items.map((it) => ({ ...it, id: String(it._id) }));
 }
 
 export async function getProject(userId, projectId) {
   const _id = toObjectId(projectId);
   if (!_id) return null;
-  return col().findOne({ _id, userId });
+  const doc = await col().findOne({ _id, userId });
+  if (!doc) return null;
+  return { ...doc, id: String(doc._id) };
 }
 
 // ============================================================
@@ -77,10 +82,6 @@ export async function deleteProject(userId, projectId) {
   const res = await col().deleteOne({ _id, userId });
   return res.deletedCount > 0;
 }
-
-// ============================================================
-// XÓA TẤT CẢ DỰ ÁN CỦA 1 USER (dùng khi xóa tài khoản)
-// ============================================================
 
 export async function deleteProjectsByUser(userId) {
   const res = await col().deleteMany({ userId });
