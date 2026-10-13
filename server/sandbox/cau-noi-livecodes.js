@@ -1,21 +1,12 @@
 // server/sandbox/cau-noi-livecodes.js
-// Nhiệm vụ: Cầu nối tới Sandbox (chạy code ở backend).
-//
-// Dùng Piston API công khai: https://emkc.org/api/v2/piston/execute
-// - Miễn phí 100%
-// - Không cần API key
-// - Hỗ trợ 60+ ngôn ngữ (JS, Python, HTML, Java, C++, Go...)
+// Nhiệm vụ: Cầu nối tới Sandbox (Piston API công khai).
+// Sửa: Báo FAILED nếu code không hợp lệ (shell, rỗng, sai loại).
 
 import { SANDBOX_LIMITS } from "./gioi-han-tai-nguyen.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
 
-// ============================================================
-// PISTON
-// ============================================================
-
 const PISTON_URL = "https://emkc.org/api/v2/piston/execute";
 
-// Map ngôn ngữ dự án → Piston language
 const LANG_MAP = {
   javascript: "javascript",
   js: "javascript",
@@ -33,14 +24,52 @@ const LANG_MAP = {
   php: "php",
   bash: "bash",
   sh: "bash",
-  // HTML/CSS là frontend — Piston không chạy trực tiếp
   html: "html",
   css: "css",
 };
 
 function normalizeLang(lang) {
   const l = String(lang || "").toLowerCase().trim();
-  return LANG_MAP[l] || "javascript";
+  return LANG_MAP[l] || null;
+}
+
+// ============================================================
+// PHÁT HIỆN SHELL SCRIPT
+// ============================================================
+
+function isShellScript(code) {
+  if (!code || typeof code !== "string") return false;
+
+  const lines = code.split("\n").filter((l) => l.trim());
+  if (lines.length < 2) return false;
+
+  const shellPatterns = [
+    /^\s*git\s+(init|add|commit|push|pull|clone|remote|checkout|branch|merge|status|log)/,
+    /^\s*npm\s+(install|run|start|init|build|test)/,
+    /^\s*yarn\s+(install|add|run|start)/,
+    /^\s*cd\s+[a-zA-Z]/,
+    /^\s*mkdir\s+/,
+    /^\s*rm\s+-rf/,
+    /^\s*touch\s+/,
+    /^\s*chmod\s+/,
+    /^\s*chown\s+/,
+    /^\s*export\s+[A-Z_]+=/,
+    /^\s*sudo\s+/,
+    /^\s*apt-get\s+/,
+    /^\s*brew\s+install/,
+    /^\s*pip\s+install/,
+    /^\s*python\s+-m/,
+    /^\s*node\s+[a-zA-Z]/,
+    /^\s*curl\s+-/,
+    /^\s*wget\s+/,
+    /^\s*docker\s+/,
+  ];
+
+  const shellLines = lines.filter((l) =>
+    shellPatterns.some((p) => p.test(l))
+  ).length;
+
+  return shellLines / lines.length > 0.5;
 }
 
 // ============================================================
@@ -50,7 +79,6 @@ function normalizeLang(lang) {
 export function buildPayload({ language, code, testCode = "", stdin = "" }) {
   const pistonLang = normalizeLang(language);
 
-  // Nếu có testCode → gộp code + test vào 1 file
   let content = code;
   if (testCode && typeof testCode === "string" && testCode.trim()) {
     content = `${code}\n\n// ===== TEST =====\n${testCode}`;
@@ -66,17 +94,77 @@ export function buildPayload({ language, code, testCode = "", stdin = "" }) {
 }
 
 // ============================================================
-// GỬI TỚI PISTON
+// SEND TO SANDBOX
 // ============================================================
 
-/**
- * @returns {Promise<{ok: boolean, stdout: string, stderr: string, durationMs: number, status: string, error?: string}>}
- */
 export async function sendToSandbox(payload) {
   const startedAt = Date.now();
 
-  // HTML/CSS — Piston không chạy được → trả "passed" vì không có gì để test logic
+  // ===== KIỂM TRA ĐẦU VÀO =====
+  const code = payload?.files?.[0]?.content || "";
+
+  // 1. Code rỗng
+  if (!code.trim()) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: "Code rỗng — không có gì để chạy.",
+      durationMs: 0,
+      status: "failed",
+      error: "EMPTY_CODE",
+    };
+  }
+
+  // 2. Shell script — không phải code chạy được
+  if (isShellScript(code)) {
+    await logWarn("Sandbox: phát hiện shell script — báo FAILED", {
+      preview: code.slice(0, 150),
+    });
+    return {
+      ok: false,
+      stdout: "",
+      stderr:
+        "Code là shell/git commands — không phải code HTML/JS/Python chạy được. Cần trả về code thật.",
+      durationMs: 0,
+      status: "failed",
+      error: "SHELL_SCRIPT",
+    };
+  }
+
+  // 3. Ngôn ngữ không hỗ trợ
+  if (!payload.language) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: "Không nhận diện được ngôn ngữ code.",
+      durationMs: 0,
+      status: "failed",
+      error: "UNKNOWN_LANGUAGE",
+    };
+  }
+
+  // 4. HTML/CSS — bỏ qua kiểm thử logic (không phải lỗi)
   if (payload.language === "html" || payload.language === "css") {
+    // Kiểm tra HTML có thẻ đặc trưng không
+    if (payload.language === "html") {
+      const tagCount = (
+        code.match(/<(html|head|body|div|p|h[1-6]|button|input|script|style)[\s>]/gi) ||
+        []
+      ).length;
+
+      if (tagCount < 2) {
+        return {
+          ok: false,
+          stdout: "",
+          stderr:
+            "Code HTML không có đủ thẻ HTML cơ bản (<html>, <body>, <div>...). Cần trả về HTML đầy đủ.",
+          durationMs: 0,
+          status: "failed",
+          error: "INVALID_HTML",
+        };
+      }
+    }
+
     return {
       ok: true,
       stdout: "(HTML/CSS không cần chạy — bỏ qua kiểm thử logic)",
@@ -86,6 +174,7 @@ export async function sendToSandbox(payload) {
     };
   }
 
+  // ===== GỌI PISTON =====
   try {
     const res = await fetchWithTimeout(
       PISTON_URL,
@@ -101,10 +190,7 @@ export async function sendToSandbox(payload) {
     const body = await safeJson(res);
 
     if (!res.ok) {
-      await logWarn("Piston: HTTP lỗi", {
-        status: res.status,
-        body,
-      });
+      await logWarn("Piston: HTTP lỗi", { status: res.status, body });
       return {
         ok: false,
         stdout: "",
@@ -115,7 +201,6 @@ export async function sendToSandbox(payload) {
       };
     }
 
-    // Piston trả về: { run: { stdout, stderr, code, signal } }
     const run = body?.run || {};
     const compile = body?.compile || {};
 
@@ -157,17 +242,12 @@ export async function sendToSandbox(payload) {
 }
 
 // ============================================================
-// KIỂM TRA ENDPOINT
+// TIỆN ÍCH
 // ============================================================
 
 export function hasSandboxEndpoint() {
-  // Piston công khai — luôn có
   return true;
 }
-
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const ctrl = new AbortController();
