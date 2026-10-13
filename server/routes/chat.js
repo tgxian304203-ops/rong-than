@@ -1,6 +1,11 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — BOSS như ChatGPT.
-// Vòng lặp Sandbox: lặp TỚI KHI PASS hoặc hết 5 phút → trả code tạm + nút "Sửa tiếp".
+// Nhiệm vụ: API chat — BOSS như ChatGPT, biết mình có lính/web/sandbox.
+//
+// NGUYÊN TẮC:
+//   - BOSS chỉ chat để hiểu User → rồi giao lính / gọi web.
+//   - BOSS KHÔNG tự viết code/văn.
+//   - Code lính trả về → LUÔN Sandbox (bất kể taskType).
+//   - Sandbox FAIL → BOSS đọc lỗi → giao lính sửa → lặp tới PASS.
 
 import express from "express";
 import multer from "multer";
@@ -54,11 +59,6 @@ const router = express.Router();
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const HISTORY_FOR_BOSS = 500;
 const HISTORY_FOR_SOLDIER = 400;
-
-// ============================================================
-// NGÂN SÁCH THỜI GIAN CHO VÒNG LẶP SANDBOX
-// ============================================================
-// Lặp tới khi PASS hoặc hết thời gian → trả code tạm + nút "Sửa tiếp".
 const SANDBOX_TIME_BUDGET_MS = 5 * 60 * 1000; // 5 phút
 
 const upload = multer({
@@ -252,10 +252,6 @@ async function runBossPipeline({
     const args = parsed.args || {};
     const taskType = args.taskType || "bulk";
     const goal = args.goal || userRequest;
-    const isCode =
-      taskType === "code" ||
-      taskType === "fix-code" ||
-      args.needCode === true;
 
     const requestTokens = countTokens(userRequest);
     if (requestTokens > LIMITS.CONTEXT_TOKEN_GEMINI_MAX) {
@@ -277,7 +273,7 @@ async function runBossPipeline({
       requirements: args.requirements || [],
       constraints: args.constraints || [],
       expectedOutput: args.expectedOutput || "",
-      needCode: isCode,
+      needCode: taskType === "code" || taskType === "fix-code",
       currentCode: currentCode || null,
       isModify: !!currentCode,
       subtasks: [],
@@ -294,7 +290,6 @@ async function runBossPipeline({
       format,
       currentCode,
       history,
-      needCode: isCode,
       signal,
     });
 
@@ -330,7 +325,6 @@ async function runBossPipeline({
     };
   }
 
-  // ===== FALLBACK =====
   return {
     ok: true,
     text: parsed.text || bossRes.text,
@@ -339,7 +333,7 @@ async function runBossPipeline({
 }
 
 // ============================================================
-// PROMPT BOSS
+// PROMPT BOSS — GIỚI THIỆU ĐỘI NGŨ
 // ============================================================
 
 function buildBossMessages({ userRequest, history = [], currentCode = null }) {
@@ -347,61 +341,65 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
     {
       role: "system",
       content:
-        "Bạn là Rồng Thần — trợ lý AI thông minh, hoạt động tự nhiên như ChatGPT.\n" +
+        "Bạn là Rồng Thần — BOSS, trợ lý AI thông minh, hoạt động như ChatGPT.\n" +
         "\n" +
-        "TÍNH CÁCH:\n" +
-        "- Suy nghĩ trước khi hành động.\n" +
-        "- Thân thiện, tự nhiên.\n" +
-        "- Hỏi lại khi chưa rõ — không đoán mò.\n" +
-        "- Hiểu ngữ cảnh từ lịch sử.\n" +
+        "BẠN LÀ ÔNG CHỦ — CÓ ĐỘI NGŨ:\n" +
         "\n" +
-        "BẠN CÓ THỂ:\n" +
-        "1. TRÒ CHUYỆN tự nhiên.\n" +
-        "2. HỎI LẠI khi chưa hiểu rõ.\n" +
-        "3. GỌI CÔNG CỤ:\n" +
-        "   - search_web: tra cứu internet.\n" +
-        "   - delegate_soldier: giao việc (viết code, viết văn, sửa code).\n" +
+        "1. 🧠 LÍNH — model khác chuyên làm việc NẶNG:\n" +
+        "   - Viết code web/app/tool.\n" +
+        "   - Viết văn dài, bài luận, phân tích lớn.\n" +
+        "   - Sửa code khi lỗi.\n" +
         "\n" +
-        "CÁCH SUY NGHĨ:\n" +
-        "Bước 1 — User muốn gì?\n" +
-        "- Chào hỏi → trả lời tự nhiên.\n" +
-        "- Hỏi thông tin mới → search_web.\n" +
-        "- Yêu cầu làm → xét Bước 2.\n" +
+        "2. 🌐 WEB — công cụ tra cứu internet:\n" +
+        "   - Tin tức mới, thông tin thời sự.\n" +
+        "   - Dữ liệu cập nhật.\n" +
         "\n" +
-        "Bước 2 — Yêu cầu đã đủ rõ chưa?\n" +
-        "- Chưa rõ → HỎI LẠI.\n" +
-        "- Đã rõ → delegate_soldier.\n" +
+        "3. 🧪 SANDBOX — công cụ kiểm thử code (TỰ ĐỘNG):\n" +
+        "   - Khi lính trả code → Sandbox tự chạy.\n" +
+        "   - PASS → code OK.\n" +
+        "   - FAIL → BẠN đọc lỗi → giao lính sửa → lặp tới PASS.\n" +
+        "   - Bạn KHÔNG cần gọi Sandbox — nó tự chạy khi có code.\n" +
         "\n" +
-        "Bước 3 — Nếu là sửa/thay đổi:\n" +
-        "- Có code hiện tại → delegate với taskType='fix-code'.\n" +
-        "- KHÔNG viết lại từ đầu khi user chỉ sửa 1 phần.\n" +
+        "NHIỆM VỤ CỦA BẠN:\n" +
+        "\n" +
+        "Bước 1 — CHAT với User để hiểu:\n" +
+        "- Chào hỏi, hỏi thăm → trả lời tự nhiên.\n" +
+        "- Hỏi chưa rõ → HỎI LẠI.\n" +
+        "- Chat như ChatGPT — thân thiện, tự nhiên.\n" +
+        "\n" +
+        "Bước 2 — Khi đã hiểu User muốn gì:\n" +
+        "- Cần thông tin mới → gọi WEB (JSON).\n" +
+        "- Cần sản phẩm cụ thể (code, văn dài) → giao LÍNH (JSON).\n" +
+        "\n" +
+        "QUY TẮC BẮT BUỘC:\n" +
+        "- BẠN KHÔNG ĐƯỢC TỰ VIẾT CODE.\n" +
+        "- BẠN KHÔNG ĐƯỢC TỰ VIẾT VĂN DÀI.\n" +
+        "- Việc nặng → LUÔN giao lính.\n" +
+        "- Chỉ chat/hỏi lại → trả text tự nhiên.\n" +
+        "- Có code → Sandbox tự chạy — bạn KHÔNG cần gọi.\n" +
         "\n" +
         "CÁCH TRẢ LỜI:\n" +
         "\n" +
-        "【Chat / Hỏi lại — text tự nhiên】\n" +
+        "【Chat / Hỏi lại】→ TEXT tự nhiên.\n" +
+        "Ví dụ: \"Xin chào! Tôi có thể giúp gì?\"\n" +
+        "Ví dụ: \"Để tôi rõ hơn: bạn muốn web bán gì? Bao nhiêu trang?\"\n" +
         "\n" +
-        "【Tra web — JSON】\n" +
+        "【Tra web】→ JSON:\n" +
         "{\"tool\": \"search_web\", \"args\": {\"query\": \"...\"}}\n" +
         "\n" +
-        "【Giao việc — JSON】\n" +
+        "【Giao lính】→ JSON:\n" +
         "{\n" +
         "  \"tool\": \"delegate_soldier\",\n" +
         "  \"args\": {\n" +
         "    \"taskType\": \"code|bulk|fix-code|summary|research|analysis\",\n" +
-        "    \"goal\": \"mô tả chi tiết\",\n" +
-        "    \"requirements\": [\"...\"],\n" +
-        "    \"constraints\": [\"...\"],\n" +
-        "    \"expectedOutput\": \"...\",\n" +
-        "    \"needCode\": true/false\n" +
+        "    \"goal\": \"mô tả chi tiết nhiệm vụ\",\n" +
+        "    \"requirements\": [\"yêu cầu cụ thể\"],\n" +
+        "    \"constraints\": [\"ràng buộc\"],\n" +
+        "    \"expectedOutput\": \"kết quả mong đợi\"\n" +
         "  }\n" +
         "}\n" +
         "\n" +
-        "QUY TẮC:\n" +
-        "- KHÔNG có quy tắc cứng. TỰ SUY NGHĨ như ChatGPT.\n" +
-        "- Chưa rõ → hỏi lại.\n" +
-        "- Sửa → fix-code, không viết lại.\n" +
-        "- KHÔNG dùng LaTeX hay $$.\n" +
-        "- Chỉ trả JSON khi gọi tool. Còn lại text tự nhiên.",
+        "KHÔNG dùng LaTeX hay $$. Chỉ trả JSON khi gọi tool.",
     },
   ];
 
@@ -490,7 +488,7 @@ function parseBossOutput(text) {
 }
 
 // ============================================================
-// GỌI LÍNH — BOSS ĐIỀU KHIỂN VÒNG LẶP SỬA
+// GỌI LÍNH + SANDBOX (BẮT BUỘC KHI CÓ CODE)
 // ============================================================
 
 async function runSoldierWork({
@@ -502,7 +500,6 @@ async function runSoldierWork({
   format,
   currentCode,
   history,
-  needCode,
   signal,
 }) {
   const giao = await giaoFormat({
@@ -530,7 +527,7 @@ async function runSoldierWork({
   let codeMeta = null;
   let resumeAvailable = false;
   let attempt = 0;
-  const MAX_SOLDIER_ATTEMPTS = 3; // chỉ giới hạn cho "gọi lính ban đầu" khi lính trả sai loại
+  const MAX_SOLDIER_ATTEMPTS = 3;
   let linh = null;
 
   const soldierMessages = buildSoldierMessages({
@@ -540,14 +537,13 @@ async function runSoldierWork({
     currentCode,
   });
 
-  // ===== GỌI LÍNH BAN ĐẦU (tối đa 3 lần nếu lính trả sai loại) =====
+  // ===== GỌI LÍNH BAN ĐẦU =====
   while (attempt < MAX_SOLDIER_ATTEMPTS) {
     attempt += 1;
 
     await logInfo(`BOSS: gọi lính — lần thử ${attempt}/${MAX_SOLDIER_ATTEMPTS}`, {
       userId,
       conversationId,
-      needCode,
     });
 
     linh = await goiLinh({
@@ -577,10 +573,23 @@ async function runSoldierWork({
 
     soldierOutput = linh.text || "";
 
-    if (!needCode) break;
-
+    // ===== KIỂM TRA CÓ CODE THẬT KHÔNG =====
     const validation = validateCodeOutput(soldierOutput);
-    if (!validation.ok) {
+
+    if (validation.ok && validation.code) {
+      // ===== CÓ CODE → BẮT BUỘC SANDBOX =====
+      language = validation.language || "html";
+      initialCode = validation.code;
+      break;
+    }
+
+    // Không có code → kiểm tra có cần retry không
+    const needsCode =
+      format.taskType === "code" ||
+      format.taskType === "fix-code" ||
+      format.needCode === true;
+
+    if (needsCode) {
       await logWarn(`BOSS: lính trả sai loại (lần ${attempt})`, {
         reason: validation.reason,
       });
@@ -604,8 +613,7 @@ async function runSoldierWork({
       continue;
     }
 
-    language = validation.language || "html";
-    initialCode = validation.code || "";
+    // Không cần code → dừng, không Sandbox
     break;
   }
 
@@ -616,16 +624,23 @@ async function runSoldierWork({
   });
 
   // ============================================================
-  // VÒNG LẶP SANDBOX — LẶP TỚI KHI PASS HOẶC HẾT 5 PHÚT
+  // SANDBOX — BẮT BUỘC KHI CÓ CODE THẬT
   // ============================================================
-  if (needCode && initialCode) {
+  if (initialCode) {
+    await logInfo("BOSS: có code → BẮT BUỘC Sandbox", {
+      userId,
+      conversationId,
+      language,
+      codeLength: initialCode.length,
+    });
+
     const startTime = Date.now();
     let iteration = 0;
 
     while (true) {
-      // ===== KIỂM TRA HẾT NGÂN SÁCH =====
+      // Kiểm tra ngân sách 5 phút
       if (Date.now() - startTime > SANDBOX_TIME_BUDGET_MS) {
-        await logWarn("BOSS: HẾT ngân sách 5 phút — trả code tạm + nút Sửa tiếp", {
+        await logWarn("BOSS: HẾT 5 phút — trả code tạm + nút Sửa tiếp", {
           userId,
           conversationId,
           iterations: iteration,
@@ -636,7 +651,7 @@ async function runSoldierWork({
 
       iteration += 1;
 
-      await logInfo(`BOSS: kiểm Sandbox — vòng ${iteration}`, {
+      await logInfo(`BOSS: Sandbox — vòng ${iteration}`, {
         userId,
         conversationId,
         elapsedMs: Date.now() - startTime,
@@ -656,9 +671,9 @@ async function runSoldierWork({
         attempts: iteration,
       };
 
-      // ===== PASS → DỪNG =====
+      // PASS → dừng
       if (testRes.ok) {
-        await logInfo("BOSS: Sandbox PASS — dừng vòng lặp", {
+        await logInfo("BOSS: Sandbox PASS", {
           userId,
           conversationId,
           iterations: iteration,
@@ -667,7 +682,7 @@ async function runSoldierWork({
         break;
       }
 
-      // ===== FAIL → BOSS sửa =====
+      // FAIL → BOSS sửa
       const lastError = testRes.stderr || testRes.error || "Không rõ";
 
       await logWarn(`BOSS: Sandbox FAIL vòng ${iteration}`, {
@@ -676,7 +691,6 @@ async function runSoldierWork({
         error: lastError.slice(0, 200),
       });
 
-      // BOSS viết format sửa
       const bossFixMessages = buildBossFixMessages({
         userRequest,
         failedCode: initialCode,
@@ -711,7 +725,6 @@ async function runSoldierWork({
         lastError
       );
 
-      // Gọi lính sửa
       const fixGiao = await giaoFormat({
         userId,
         conversationId,
@@ -745,20 +758,19 @@ async function runSoldierWork({
       });
 
       if (!fixLinh.ok || !fixLinh.text) {
-        await logWarn("BOSS: lính sửa thất bại — thử vòng tiếp", {
+        await logWarn("BOSS: lính sửa thất bại — tiếp tục vòng", {
           error: fixLinh.error,
         });
         continue;
       }
 
       const validation = validateCodeOutput(fixLinh.text);
-      if (validation.ok) {
+      if (validation.ok && validation.code) {
         initialCode = validation.code;
         language = validation.language || language;
       } else {
         initialCode = fixLinh.text;
       }
-      // → tiếp tục vòng lặp — kiểm Sandbox lại
     }
 
     // Lưu code cuối
@@ -780,12 +792,18 @@ async function runSoldierWork({
     }
 
     soldierOutput = initialCode;
+  } else {
+    await logInfo("BOSS: không có code → bỏ qua Sandbox", {
+      userId,
+      conversationId,
+      taskType: format.taskType,
+    });
   }
 
   return {
     ok: true,
     soldierOutput,
-    isCode: needCode,
+    isCode: !!initialCode,
     language,
     sandboxStatus,
     resumeAvailable,
@@ -811,8 +829,8 @@ function buildBossFixMessages({
     {
       role: "system",
       content:
-        "Bạn là BOSS. Code của model khác bị lỗi Sandbox.\n" +
-        "Đọc lỗi + viết FORMAT cho model khác sửa.\n" +
+        "Bạn là BOSS. Code của lính bị lỗi Sandbox.\n" +
+        "Đọc lỗi + viết FORMAT cho lính sửa.\n" +
         "\n" +
         "Trả về DUY NHẤT 1 JSON:\n" +
         "{\n" +
@@ -842,7 +860,7 @@ function buildBossFixMessages({
         failedCode.slice(0, 1500),
         "```",
         "",
-        "Viết format sửa cho model khác (JSON).",
+        "Viết format sửa cho lính (JSON).",
       ].join("\n"),
     },
   ];
@@ -902,12 +920,12 @@ async function bossFinalAnswer({
     {
       role: "system",
       content:
-        "Bạn là Rồng Thần. Vừa nhận kết quả.\n" +
+        "Bạn là Rồng Thần. Vừa nhận kết quả từ lính.\n" +
         "Đọc kết quả → trả lời User tự nhiên, thân thiện.\n" +
         "\n" +
         "QUY TẮC:\n" +
         "1. Tiếng Việt tự nhiên.\n" +
-        "2. KHÔNG nhắc 'model khác', 'lính', 'Sandbox'.\n" +
+        "2. KHÔNG nhắc 'lính', 'Sandbox', 'giao việc'.\n" +
         "3. KHÔNG dùng LaTeX hay $$.\n" +
         "4. Code PASS → trình bày trong ```<lang>...``` đầy đủ.\n" +
         "5. Code FAIL → thông báo chưa PASS, gợi ý 'Sửa tiếp'.\n" +
@@ -1003,8 +1021,8 @@ function buildSoldierMessages({
     {
       role: "system",
       content:
-        "Bạn là model được giao việc.\n" +
-        "LÀM VIỆC theo format, TRẢ KẾT QUẢ.\n" +
+        "Bạn là lính — model AI được BOSS giao việc.\n" +
+        "LÀM VIỆC theo format, TRẢ KẾT QUẢ cho BOSS.\n" +
         "\n" +
         "QUY TẮC:\n" +
         "1. Nếu có CODE HIỆN TẠI → SỬA/THAY ĐỔI, KHÔNG viết lại từ đầu.\n" +
@@ -1028,7 +1046,7 @@ function buildSoldierMessages({
     "YÊU CẦU GỐC:",
     userRequest,
     "",
-    "NHIỆM VỤ:",
+    "FORMAT BOSS GIAO:",
     format.goal,
     "",
     `Loại: ${format.taskType}`,
@@ -1303,6 +1321,24 @@ async function runChunkedDelegate({
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
 
+    // Sandbox code ghép
+    try {
+      const testRes = await chayKiemThu({
+        userId,
+        conversationId,
+        language: lastLanguage,
+        code: mergedCode,
+      });
+
+      await logInfo("BOSS: Sandbox code ghép", {
+        userId,
+        conversationId,
+        status: testRes.status,
+      });
+    } catch {
+      /* bỏ qua */
+    }
+
     try {
       const saved = await saveArtifact({
         userId,
@@ -1407,7 +1443,6 @@ async function runBossResume({ userId, conversationId, signal }) {
       version: latest.version || 1,
     },
     history: [],
-    needCode: true,
     signal,
   });
 
