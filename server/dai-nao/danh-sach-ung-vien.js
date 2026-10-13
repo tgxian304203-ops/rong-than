@@ -1,6 +1,7 @@
 // server/dai-nao/danh-sach-ung-vien.js
 // Nhiệm vụ: Danh sách model ứng viên của Đại Não.
-// Hỗ trợ dò model động từ provider qua API /models khi bảng tĩnh hết.
+// Gồm model ưu tiên + model phụ (dự phòng).
+// Chỉ dò động khi HẾT tất cả model tĩnh + key.
 
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
@@ -21,29 +22,83 @@ export const DAI_NAO_TASK = {
 };
 
 // ============================================================
-// BẢNG ỨNG VIÊN TĨNH
+// BẢNG ỨNG VIÊN TĨNH — GỒM ƯU TIÊN + PHỤ
 // ============================================================
 
 export const DAI_NAO_CANDIDATES = {
   [DAI_NAO_TASK.CLASSIFY]: [
+    // Ưu tiên
     { name: "openai/gpt-oss-120b", provider: "groq", priority: 1 },
     {
       name: "meta-llama/llama-4-maverick-17b-128e-instruct",
       provider: "groq",
       priority: 2,
     },
+    // Model phụ
+    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 10 },
+    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
+    { name: "meta-llama/llama-4-scout-17b-16e-instruct", provider: "groq", priority: 12 },
+    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 13 },
+    { name: "llama-3.1-8b-instant", provider: "groq", priority: 14 },
+    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
+    { name: "gemini-3.1-flash-lite", provider: "gemini", priority: 21 },
+    { name: "gemini-2.5-flash", provider: "gemini", priority: 22 },
+    { name: "qwen/qwen3-next-80b-a3b-instruct:free", provider: "openrouter", priority: 30 },
+    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 31 },
+    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 32 },
+    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 33 },
+    { name: "stepfun/step-3.5-flash:free", provider: "openrouter", priority: 34 },
   ],
+
   [DAI_NAO_TASK.SELECT_MODEL]: [
+    // Ưu tiên
     { name: "llama-3.3-70b-versatile", provider: "groq", priority: 1 },
     { name: "openai/gpt-oss-20b", provider: "groq", priority: 2 },
+    // Model phụ
+    { name: "openai/gpt-oss-120b", provider: "groq", priority: 10 },
+    {
+      name: "meta-llama/llama-4-maverick-17b-128e-instruct",
+      provider: "groq",
+      priority: 11,
+    },
+    { name: "meta-llama/llama-4-scout-17b-16e-instruct", provider: "groq", priority: 12 },
+    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 13 },
+    { name: "llama-3.1-8b-instant", provider: "groq", priority: 14 },
+    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
+    { name: "gemini-3.1-flash-lite", provider: "gemini", priority: 21 },
+    { name: "gemini-2.5-flash", provider: "gemini", priority: 22 },
+    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 30 },
+    { name: "openai/gpt-oss-20b:free", provider: "openrouter", priority: 31 },
+    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 32 },
+    { name: "nvidia/nemotron-3-nano-30b-a3b:free", provider: "openrouter", priority: 33 },
   ],
+
   [DAI_NAO_TASK.CALL_BOSS]: [
+    // Ưu tiên
     { name: "openai/gpt-oss-120b", provider: "groq", priority: 1 },
     {
       name: "meta-llama/llama-4-maverick-17b-128e-instruct",
       provider: "groq",
       priority: 2,
     },
+    // Model phụ
+    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 10 },
+    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
+    { name: "meta-llama/llama-4-scout-17b-16e-instruct", provider: "groq", priority: 12 },
+    { name: "moonshotai/kimi-k2-instruct", provider: "groq", priority: 13 },
+    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 14 },
+    { name: "llama-3.1-8b-instant", provider: "groq", priority: 15 },
+    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
+    { name: "gemini-3.1-flash-lite", provider: "gemini", priority: 21 },
+    { name: "gemini-2.5-flash", provider: "gemini", priority: 22 },
+    { name: "gemini-2.5-pro", provider: "gemini", priority: 23 },
+    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 30 },
+    { name: "qwen/qwen3-next-80b-a3b-instruct:free", provider: "openrouter", priority: 31 },
+    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 32 },
+    { name: "minimax/minimax-m2.5:free", provider: "openrouter", priority: 33 },
+    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 34 },
+    { name: "stepfun/step-3.5-flash:free", provider: "openrouter", priority: 35 },
+    { name: "arcee-ai/trinity-mini:free", provider: "openrouter", priority: 36 },
   ],
 };
 
@@ -56,29 +111,15 @@ export function layTatCaUngVien() {
 }
 
 // ============================================================
-// DÒ MODEL ĐỘNG TỪ PROVIDER
+// DÒ MODEL ĐỘNG — CHỈ KHI HẾT TĨNH + KEY
 // ============================================================
-//
-// Khi bảng tĩnh hết (tất cả model đều hết quota/lỗi):
-//   - Gọi API /models của provider → lấy danh sách model ĐẦY ĐỦ.
-//   - Trả về danh sách model động để thử tiếp.
-//
-// Không cache — gọi mỗi lần cần theo yêu cầu dự án.
 
-/**
- * Dò model động từ 1 provider.
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.provider    - "groq" | "gemini" | "openrouter"
- * @returns {Promise<{ok: boolean, models: string[], error?: string}>}
- */
 export async function doModelDongTuProvider({ userId, provider }) {
   const mod = MODULES[provider];
   if (!mod) {
     return { ok: false, models: [], error: `Provider không hỗ trợ: ${provider}` };
   }
 
-  // Lấy key còn quota của provider này
   const keys = await listKeysByProvider(userId, provider);
   const usableKeys = keys.filter((k) => k.quota !== "out");
 
@@ -90,7 +131,6 @@ export async function doModelDongTuProvider({ userId, provider }) {
     };
   }
 
-  // Dùng key đầu tiên để dò
   const key = usableKeys[0];
 
   try {
@@ -126,12 +166,6 @@ export async function doModelDongTuProvider({ userId, provider }) {
   }
 }
 
-/**
- * Dò model động từ TẤT CẢ provider.
- * @param {object} p
- * @param {string} p.userId
- * @returns {Promise<Array<{ name: string, provider: string }>>}
- */
 export async function doTatCaModelDong({ userId }) {
   const allProviders = Object.keys(MODULES);
   const result = [];

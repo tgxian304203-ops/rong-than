@@ -33,13 +33,8 @@ import { traWeb, formatWebResults } from "../boss/tra-web.js";
 import { giaoFormat } from "../boss/giao-format.js";
 import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
 
-import { chonBossTheoYeuCau } from "../dai-nao/chon-boss-theo-yeu-cau.js";
 import { goiBoss } from "../dai-nao/goi-boss.js";
 import { goiBossMoi } from "../dai-nao/goi-boss-moi.js";
-import {
-  banGiaoTrangThai,
-  buildHandoffPrompt,
-} from "../dai-nao/ban-giao-trang-thai.js";
 
 import { goiLinh } from "../tieu-nao/goi-linh.js";
 import { chayKiemThu } from "../sandbox/chay-kiem-thu.js";
@@ -143,9 +138,6 @@ async function runBossPipeline({
     codeVersion: currentCode?.version || 0,
   });
 
-  const bossPick = await chonBossTheoYeuCau({ userId });
-  if (!bossPick.ok) return { ok: false, error: bossPick.error };
-
   const bossMessages = buildBossMessages({
     userRequest,
     history: historyCtx,
@@ -155,8 +147,7 @@ async function runBossPipeline({
   let bossRes = await goiBoss({
     userId,
     conversationId,
-    boss: bossPick.boss,
-    candidates: bossPick.candidates,
+    taskType: "call-boss",
     messages: bossMessages,
     temperature: 0.6,
     maxTokens: 8192,
@@ -164,17 +155,11 @@ async function runBossPipeline({
   });
 
   if (!bossRes.ok) {
-    const handoff = await banGiaoTrangThai({ userId, conversationId });
-    const handoffPrompt = handoff.ok ? buildHandoffPrompt(handoff.handoff) : "";
-    const messagesWithHandoff = handoffPrompt
-      ? [...bossMessages, { role: "system", content: handoffPrompt }]
-      : bossMessages;
-
     bossRes = await goiBossMoi({
       userId,
       conversationId,
       oldSession: null,
-      messages: messagesWithHandoff,
+      messages: bossMessages,
       temperature: 0.6,
       maxTokens: 8192,
       signal,
@@ -200,7 +185,7 @@ async function runBossPipeline({
     return {
       ok: true,
       text: parsed.text,
-      meta: { action: "reply", boss: bossRes.boss || bossPick.boss },
+      meta: { action: "reply" },
     };
   }
 
@@ -220,8 +205,7 @@ async function runBossPipeline({
     const finalRes = await goiBoss({
       userId,
       conversationId,
-      boss: bossPick.boss,
-      candidates: bossPick.candidates,
+      taskType: "call-boss",
       messages: finalMessages,
       temperature: 0.6,
       maxTokens: 8192,
@@ -235,7 +219,6 @@ async function runBossPipeline({
         : `Không tra được web. ${web.error || ""}`,
       meta: {
         action: "web",
-        boss: bossRes.boss || bossPick.boss,
         web: { used: true, ok: web.ok },
       },
     };
@@ -253,7 +236,6 @@ async function runBossPipeline({
         userId,
         conversationId,
         userRequest,
-        bossPick,
         bossSessionId,
         historyCtx,
         history,
@@ -279,7 +261,6 @@ async function runBossPipeline({
       userId,
       conversationId,
       userRequest,
-      bossPick,
       bossSessionId,
       format,
       currentCode,
@@ -292,7 +273,6 @@ async function runBossPipeline({
     const finalText = await bossFinalAnswer({
       userId,
       conversationId,
-      bossPick,
       userRequest,
       soldierOutput: result.soldierOutput,
       isCode: result.isCode,
@@ -309,7 +289,6 @@ async function runBossPipeline({
       text: finalText,
       meta: {
         action: "delegate",
-        boss: bossRes.boss || bossPick.boss,
         soldier: result.soldier,
         sandbox: result.sandboxMeta,
         code: result.codeMeta,
@@ -496,7 +475,6 @@ async function runSoldierWork({
   userId,
   conversationId,
   userRequest,
-  bossPick,
   bossSessionId,
   format,
   currentCode,
@@ -550,14 +528,12 @@ async function runSoldierWork({
     linh = await goiLinh({
       userId,
       taskId: currentGiao.taskId,
-      soldier: currentGiao.soldier,
-      candidates: currentGiao.candidates,
+      taskType: currentGiao.taskType,
       messages: soldierMessages,
       payload: format,
       temperature: 0.3,
       maxTokens: 8192,
       signal,
-      taskType: currentGiao.taskType,
     });
 
     if (!linh.ok) {
@@ -694,8 +670,7 @@ async function runSoldierWork({
       const bossFixRes = await goiBoss({
         userId,
         conversationId,
-        boss: bossPick.boss,
-        candidates: bossPick.candidates,
+        taskType: "call-boss",
         messages: bossFixMessages,
         temperature: 0.4,
         maxTokens: 4096,
@@ -739,14 +714,12 @@ async function runSoldierWork({
       const fixLinh = await goiLinh({
         userId,
         taskId: fixGiao.taskId,
-        soldier: fixGiao.soldier,
-        candidates: fixGiao.candidates,
+        taskType: fixGiao.taskType,
         messages: fixSoldierMessages,
         payload: fixFormat,
         temperature: 0.3,
         maxTokens: 8192,
         signal,
-        taskType: fixGiao.taskType,
       });
 
       if (!fixLinh.ok || !fixLinh.text) {
@@ -890,7 +863,6 @@ function parseBossFixFormat(text, originalFormat, attempt, error) {
 async function bossFinalAnswer({
   userId,
   conversationId,
-  bossPick,
   userRequest,
   soldierOutput,
   isCode,
@@ -964,8 +936,7 @@ async function bossFinalAnswer({
   const res = await goiBoss({
     userId,
     conversationId,
-    boss: bossPick.boss,
-    candidates: bossPick.candidates,
+    taskType: "call-boss",
     messages,
     temperature: 0.6,
     maxTokens: 8192,
@@ -1235,7 +1206,6 @@ async function runChunkedDelegate({
   userId,
   conversationId,
   userRequest,
-  bossPick,
   bossSessionId,
   historyCtx,
   history,
@@ -1287,14 +1257,12 @@ async function runChunkedDelegate({
     const linh = await goiLinh({
       userId,
       taskId: giao.taskId,
-      soldier: giao.soldier,
-      candidates: giao.candidates,
+      taskType: giao.taskType,
       messages: soldierMessages,
       payload: format,
       temperature: 0.3,
       maxTokens: 8192,
       signal,
-      taskType: giao.taskType,
     });
 
     if (!linh.ok) continue;
@@ -1419,14 +1387,10 @@ async function runBossResume({ userId, conversationId, signal }) {
     return { ok: false, error: "Không tìm thấy code để sửa tiếp." };
   }
 
-  const bossPick = await chonBossTheoYeuCau({ userId });
-  if (!bossPick.ok) return { ok: false, error: bossPick.error };
-
   const result = await runSoldierWork({
     userId,
     conversationId,
     userRequest: "Sửa tiếp code hiện tại",
-    bossPick,
     bossSessionId: null,
     format: {
       taskType: "fix-code",
@@ -1454,7 +1418,6 @@ async function runBossResume({ userId, conversationId, signal }) {
   const finalText = await bossFinalAnswer({
     userId,
     conversationId,
-    bossPick,
     userRequest: "Sửa tiếp code",
     soldierOutput: result.soldierOutput,
     isCode: true,

@@ -1,20 +1,16 @@
 // server/db/tieuNaoKeys.js
-// Nhiệm vụ: Collection tieuNaoKeys — key của Tiểu Não.
-// Tiểu Não và Đại Não ĐỘC LẬP key hoàn toàn.
+// Nhiệm vụ: Collection tieuNaoKeys.
 
 import { ObjectId } from "mongodb";
 
 const COL_NAME = "tieuNaoKeys";
+const QUOTA_RESET_MS = 60 * 60 * 1000; // 1 giờ
 
 function col() {
   const db = global.__rongThanDB__;
   if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
   return db.collection(COL_NAME);
 }
-
-// ============================================================
-// TẠO
-// ============================================================
 
 export async function addKey({
   userId,
@@ -38,15 +34,13 @@ export async function addKey({
   return { ...doc, _id: res.insertedId };
 }
 
-// ============================================================
-// ĐỌC
-// ============================================================
-
 export async function listKeys(userId) {
+  await resetExpiredQuota(userId);
   return col().find({ userId }).sort({ createdAt: -1 }).toArray();
 }
 
 export async function listKeysByProvider(userId, provider) {
+  await resetExpiredQuota(userId);
   return col()
     .find({ userId, provider })
     .sort({ createdAt: -1 })
@@ -63,10 +57,6 @@ export async function countKeys(userId) {
   return col().countDocuments({ userId });
 }
 
-// ============================================================
-// CẬP NHẬT QUOTA
-// ============================================================
-
 export async function updateQuota(keyId, quota) {
   const _id = toObjectId(keyId);
   if (!_id) return false;
@@ -77,9 +67,17 @@ export async function updateQuota(keyId, quota) {
   return res.modifiedCount > 0;
 }
 
-// ============================================================
-// XÓA
-// ============================================================
+export async function resetExpiredQuota(userId) {
+  const cutoff = new Date(Date.now() - QUOTA_RESET_MS);
+  try {
+    await col().updateMany(
+      { userId, quota: "out", lastCheckedAt: { $lte: cutoff } },
+      { $set: { quota: "ok", updatedAt: new Date() } }
+    );
+  } catch {
+    /* bỏ qua */
+  }
+}
 
 export async function deleteKey(userId, keyId) {
   const _id = toObjectId(keyId);
@@ -88,18 +86,10 @@ export async function deleteKey(userId, keyId) {
   return res.deletedCount > 0;
 }
 
-// ============================================================
-// XÓA TẤT CẢ KEY TIỂU NÃO CỦA 1 USER
-// ============================================================
-
 export async function deleteKeysByUser(userId) {
   const res = await col().deleteMany({ userId });
   return res.deletedCount;
 }
-
-// ============================================================
-// TIỆN ÍCH
-// ============================================================
 
 function toObjectId(id) {
   try {
