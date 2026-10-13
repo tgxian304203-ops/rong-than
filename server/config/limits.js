@@ -37,8 +37,29 @@ export const LIMITS = {
   // ============================================================
   // NGỮ CẢNH HỘI THOẠI
   // ============================================================
-  // Số tin nhắn gần nhất gửi kèm cho BOSS / lính.
+  // Số tin nhắn tối đa đọc từ DB.
   CONTEXT_MESSAGES_LIMIT: 500,
+
+  // ============================================================
+  // TOKEN / CHUNK
+  // ============================================================
+  // Ước tính token: 1 token ≈ 4 ký tự
+  TOKEN_ESTIMATE_CHARS_PER_TOKEN: 4,
+
+  // Ngưỡng chọn model:
+  //   < 20k tokens  → Groq (nhanh)
+  //   20k - 100k    → Gemini (context lớn)
+  //   > 100k        → chia nhỏ
+  CONTEXT_TOKEN_GROQ_MAX: 20000,
+  CONTEXT_TOKEN_GEMINI_MAX: 100000,
+
+  // Chunk size khi chia nhỏ (tokens)
+  CHUNK_TOKEN_SIZE: 100000,
+
+  // Chunk size (ký tự) — suy ra từ token
+  get CHUNK_CHAR_SIZE() {
+    return this.CHUNK_TOKEN_SIZE * this.TOKEN_ESTIMATE_CHARS_PER_TOKEN;
+  },
 
   // ============================================================
   // DỰ ÁN / HỘI THOẠI

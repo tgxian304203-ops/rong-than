@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Đọc 500 tin gần nhất. Phân tích 3 tầng. Ẩn vai trò nội bộ.
+// Hỗ trợ: lịch sử 500 tin, phân tích 3 tầng, chunking, Sandbox cuối.
 
 import express from "express";
 import multer from "multer";
@@ -47,6 +47,7 @@ import {
 } from "../dai-nao/ban-giao-trang-thai.js";
 
 import { goiLinh } from "../tieu-nao/goi-linh.js";
+import { chunkText } from "../utils/chunker.js";
 
 import { LIMITS } from "../config/limits.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
@@ -84,27 +85,15 @@ async function attachFilesToMessage(msg) {
       url: a.url || "",
       dataUrl: a.dataUrl || "",
     }));
-    return {
-      ...msg,
-      id: String(msg._id),
-      attachments: mapped,
-    };
+    return { ...msg, id: String(msg._id), attachments: mapped };
   } catch {
     return { ...msg, id: String(msg._id), attachments: [] };
   }
 }
 
-// ============================================================
-// ĐỌC LỊCH SỬ HỘI THOẠI LÀM NGỮ CẢNH
-// ============================================================
-
 async function loadConversationHistory(conversationId) {
   try {
-    const msgs = await listRecentMessages(
-      conversationId,
-      LIMITS.CONTEXT_MESSAGES_LIMIT
-    );
-    return msgs;
+    return await listRecentMessages(conversationId, LIMITS.CONTEXT_MESSAGES_LIMIT);
   } catch {
     return [];
   }
@@ -129,11 +118,9 @@ async function runBossPipeline({
   });
   if (!recv.ok) return { ok: false, error: recv.error };
 
-  // Đọc lịch sử (không gồm tin vừa gửi)
   const history = await loadConversationHistory(conversationId);
   const historyForContext = history.slice(0, -1);
 
-  // Phân tích 3 tầng
   const analysis = await phanTichYeuCau({
     userId,
     conversationId,
@@ -144,6 +131,20 @@ async function runBossPipeline({
   });
   if (!analysis.ok) return { ok: false, error: analysis.error };
 
+  // ===== CHUNKED PIPELINE =====
+  if (analysis.analysis.strategy === "chunk") {
+    return await runChunkedPipeline({
+      userId,
+      conversationId,
+      userRequest,
+      userLabel,
+      analysis: analysis.analysis,
+      historyForContext,
+      signal,
+    });
+  }
+
+  // ===== PIPELINE BÌNH THƯỜNG =====
   let webContext = "";
   if (analysis.analysis.needWeb) {
     const web = await traWeb({
@@ -355,14 +356,262 @@ async function runBossPipeline({
 }
 
 // ============================================================
-// PIPELINE BOSS — RESUME (SỬA TIẾP)
+// PIPELINE CHUNKED
+// ============================================================
+
+async function runChunkedPipeline({
+  userId,
+  conversationId,
+  userRequest,
+  userLabel,
+  analysis,
+  historyForContext,
+  signal,
+}) {
+  const chunks = chunkText(userRequest);
+
+  await logInfo("BOSS: chạy pipeline CHUNKED", {
+    userId,
+    conversationId,
+    chunkCount: chunks.length,
+  });
+
+  const outputs = [];
+  const codeChunks = [];
+  let lastLanguage = "html";
+  let lastBossSessionId = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkReq = `[PHẦN ${i + 1}/${chunks.length}]\n${chunks[i]}`;
+
+    await logInfo(`BOSS: xử lý phần ${i + 1}/${chunks.length}`, {
+      userId,
+      conversationId,
+      chunkLength: chunks[i].length,
+    });
+
+    const bossPick = await chonBossTheoYeuCau({ userId });
+    if (!bossPick.ok) continue;
+
+    const bossMessages = buildBossPlanMessages({
+      userRequest: chunkReq,
+      analysis,
+      webContext: "",
+      history: i === 0 ? historyForContext : [],
+    });
+
+    const bossRes = await goiBoss({
+      userId,
+      conversationId,
+      boss: bossPick.boss,
+      candidates: bossPick.candidates,
+      messages: bossMessages,
+      temperature: 0.4,
+      maxTokens: 4096,
+      signal,
+    });
+
+    const bossPlan = bossRes.ok ? bossRes.text : "";
+    const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
+    lastBossSessionId = bossSessionId;
+
+    const formatRes = await vietFormat({
+      userId,
+      conversationId,
+      userRequest: chunkReq,
+      analysis,
+      webContext: bossPlan,
+      history: i === 0 ? historyForContext : [],
+    });
+    if (!formatRes.ok) continue;
+
+    const giao = await giaoFormat({
+      userId,
+      conversationId,
+      bossSessionId,
+      format: formatRes.format,
+    });
+    if (!giao.ok) continue;
+
+    const soldierMessages = buildSoldierMessages({
+      userRequest: chunkReq,
+      format: formatRes.format,
+      webContext: "",
+      history: i === 0 ? historyForContext : [],
+    });
+
+    const linh = await goiLinh({
+      userId,
+      taskId: giao.taskId,
+      soldier: giao.soldier,
+      candidates: giao.candidates,
+      messages: soldierMessages,
+      payload: formatRes.format,
+      temperature: 0.3,
+      maxTokens: 8192,
+      signal,
+    });
+
+    if (!linh.ok) continue;
+
+    const partOutput = linh.text || "";
+
+    if (analysis.needCode) {
+      const lang = guessLanguage(partOutput);
+      const code = extractCodeBlock(partOutput, lang);
+
+      if (code) {
+        lastLanguage = lang;
+        codeChunks.push(code);
+
+        const loop = await vongLapSua({
+          userId,
+          conversationId,
+          bossSessionId,
+          language: lang,
+          initialCode: code,
+          goal: chunkReq,
+          signal,
+        });
+
+        if (loop.ok) {
+          outputs.push(
+            `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``
+          );
+        } else {
+          outputs.push(
+            `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
+          );
+        }
+      } else {
+        outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
+      }
+    } else {
+      outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
+    }
+  }
+
+  let finalText = outputs.join("\n\n");
+  let sandboxMeta = null;
+  let codeMeta = null;
+  let resumeAvailable = false;
+
+  // ===== SANDBOX CUỐI TRÊN CODE GHÉP =====
+  if (analysis.needCode && codeChunks.length > 0) {
+    await logInfo("BOSS: chạy Sandbox CUỐI trên code ghép", {
+      userId,
+      conversationId,
+      chunkCount: codeChunks.length,
+    });
+
+    const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
+
+    const finalLoop = await vongLapSua({
+      userId,
+      conversationId,
+      bossSessionId: lastBossSessionId,
+      language: lastLanguage,
+      initialCode: mergedCode,
+      goal: userRequest,
+      signal,
+    });
+
+    sandboxMeta = finalLoop.lastRun
+      ? {
+          status: finalLoop.lastRun.status,
+          runId: finalLoop.lastRun.runId,
+          attempts: finalLoop.attempts,
+          finalMerge: true,
+        }
+      : null;
+
+    try {
+      const saved = await saveArtifact({
+        userId,
+        conversationId,
+        language: lastLanguage,
+        code: finalLoop.finalCode || mergedCode,
+        version: (finalLoop.version || 1) + 1,
+      });
+      codeMeta = {
+        language: lastLanguage,
+        version: saved.version,
+        artifactId: String(saved._id),
+      };
+    } catch {
+      /* bỏ qua */
+    }
+
+    if (finalLoop.ok) {
+      finalText = `✅ Code đã vượt qua kiểm thử Sandbox cuối (v${
+        finalLoop.version || 1
+      }, ${finalLoop.attempts} lần thử).\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\``;
+      resumeAvailable = false;
+    } else {
+      finalText = `⚠ Code ghép chưa vượt qua kiểm thử cuối sau ${finalLoop.attempts} lần thử.\n\nLỗi cuối:\n${
+        finalLoop.lastRun?.stderr || "(không rõ)"
+      }\n\nCode hiện tại:\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục.`;
+      resumeAvailable = true;
+    }
+  }
+
+  return {
+    ok: true,
+    text: finalText,
+    meta: {
+      analysis,
+      sandbox: sandboxMeta,
+      code: codeMeta,
+      chunked: true,
+      chunkCount: chunks.length,
+      resumeAvailable,
+    },
+  };
+}
+
+// ============================================================
+// GHÉP CODE CHUNKS
+// ============================================================
+
+function mergeCodeChunks(codeChunks, language) {
+  if (!Array.isArray(codeChunks) || codeChunks.length === 0) return "";
+
+  if (language === "html") {
+    let bodyContent = "";
+    let headContent = "";
+
+    for (const chunk of codeChunks) {
+      const headMatch = chunk.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+      if (headMatch) headContent += "\n" + headMatch[1];
+
+      const bodyMatch = chunk.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (bodyMatch) {
+        bodyContent += "\n" + bodyMatch[1];
+      } else {
+        bodyContent += "\n" + chunk;
+      }
+    }
+
+    return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+${headContent}
+</head>
+<body>
+${bodyContent}
+</body>
+</html>`;
+  }
+
+  return codeChunks.join("\n\n");
+}
+
+// ============================================================
+// PIPELINE BOSS — RESUME
 // ============================================================
 
 async function runBossResume({ userId, conversationId, signal }) {
-  await logInfo("BOSS: BẮT ĐẦU RESUME (Sửa tiếp)", {
-    userId,
-    conversationId,
-  });
+  await logInfo("BOSS: BẮT ĐẦU RESUME", { userId, conversationId });
 
   const workState = await loadWorkState(userId, conversationId);
   const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
@@ -462,9 +711,8 @@ function buildBossPlanMessages({ userRequest, analysis, webContext, history = []
 
   for (const m of history) {
     if (!m.text || !m.text.trim()) continue;
-    const role = m.role === "ai" ? "assistant" : "user";
     messages.push({
-      role,
+      role: m.role === "ai" ? "assistant" : "user",
       content: m.text,
     });
   }
@@ -473,7 +721,7 @@ function buildBossPlanMessages({ userRequest, analysis, webContext, history = []
     "Yêu cầu hiện tại của User:",
     userRequest,
     "",
-    "Phân tích 3 tầng:",
+    "Phân tích:",
     `- taskType: ${analysis.taskType}`,
     `- goal: ${analysis.goal}`,
     `- needWeb: ${analysis.needWeb}`,
@@ -519,9 +767,8 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
 
   for (const m of history) {
     if (!m.text || !m.text.trim()) continue;
-    const role = m.role === "ai" ? "assistant" : "user";
     messages.push({
-      role,
+      role: m.role === "ai" ? "assistant" : "user",
       content: m.text,
     });
   }
