@@ -1,11 +1,6 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — BOSS như ChatGPT, biết mình có lính/web/sandbox.
-//
-// NGUYÊN TẮC:
-//   - BOSS chỉ chat để hiểu User → rồi giao lính / gọi web.
-//   - BOSS KHÔNG tự viết code/văn.
-//   - Code lính trả về → LUÔN Sandbox (bất kể taskType).
-//   - Sandbox FAIL → BOSS đọc lỗi → giao lính sửa → lặp tới PASS.
+// Nhiệm vụ: API chat — BOSS như ChatGPT.
+// BOSS hiểu nguyên tắc, tự quyết định. Code → Sandbox → báo PASS/FAIL cho User.
 
 import express from "express";
 import multer from "multer";
@@ -59,7 +54,7 @@ const router = express.Router();
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const HISTORY_FOR_BOSS = 500;
 const HISTORY_FOR_SOLDIER = 400;
-const SANDBOX_TIME_BUDGET_MS = 5 * 60 * 1000; // 5 phút
+const SANDBOX_TIME_BUDGET_MS = 5 * 60 * 1000;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -126,7 +121,6 @@ async function runBossPipeline({
   const history = await loadConversationHistory(conversationId, HISTORY_FOR_BOSS);
   const historyCtx = history.slice(0, -1);
 
-  // Đọc code mới nhất
   let currentCode = null;
   try {
     const artifact = await getLatestCodeArtifact(conversationId);
@@ -201,7 +195,7 @@ async function runBossPipeline({
     tool: parsed.tool || null,
   });
 
-  // ===== TEXT =====
+  // ===== TEXT (chat / hỏi lại) =====
   if (parsed.type === "text") {
     return {
       ok: true,
@@ -333,7 +327,7 @@ async function runBossPipeline({
 }
 
 // ============================================================
-// PROMPT BOSS — GIỚI THIỆU ĐỘI NGŨ
+// PROMPT BOSS — NGUYÊN TẮC, KHÔNG TỪ KHÓA CỨNG
 // ============================================================
 
 function buildBossMessages({ userRequest, history = [], currentCode = null }) {
@@ -341,7 +335,7 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
     {
       role: "system",
       content:
-        "Bạn là Rồng Thần — BOSS, trợ lý AI thông minh, hoạt động như ChatGPT.\n" +
+        "Bạn là Rồng Thần — BOSS, trợ lý AI thông minh, hoạt động tự nhiên như ChatGPT.\n" +
         "\n" +
         "BẠN LÀ ÔNG CHỦ — CÓ ĐỘI NGŨ:\n" +
         "\n" +
@@ -354,29 +348,36 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "   - Tin tức mới, thông tin thời sự.\n" +
         "   - Dữ liệu cập nhật.\n" +
         "\n" +
-        "3. 🧪 SANDBOX — công cụ kiểm thử code (TỰ ĐỘNG):\n" +
-        "   - Khi lính trả code → Sandbox tự chạy.\n" +
-        "   - PASS → code OK.\n" +
-        "   - FAIL → BẠN đọc lỗi → giao lính sửa → lặp tới PASS.\n" +
-        "   - Bạn KHÔNG cần gọi Sandbox — nó tự chạy khi có code.\n" +
+        "3. 🧪 SANDBOX — công cụ kiểm thử code:\n" +
+        "   - Khi lính trả code → tự động chạy.\n" +
+        "   - PASS → báo User 'Code đã vượt qua kiểm thử'.\n" +
+        "   - FAIL → báo User 'Code chưa PASS, có thể bấm Sửa tiếp'.\n" +
+        "   - Vòng lặp sửa cho tới khi PASS.\n" +
         "\n" +
-        "NHIỆM VỤ CỦA BẠN:\n" +
+        "NGUYÊN TẮC HOẠT ĐỘNG:\n" +
         "\n" +
-        "Bước 1 — CHAT với User để hiểu:\n" +
-        "- Chào hỏi, hỏi thăm → trả lời tự nhiên.\n" +
-        "- Hỏi chưa rõ → HỎI LẠI.\n" +
-        "- Chat như ChatGPT — thân thiện, tự nhiên.\n" +
+        "1. CHAT với User để HIỂU rõ yêu cầu.\n" +
+        "   - Chào hỏi → trả lời tự nhiên.\n" +
+        "   - Chưa rõ → HỎI LẠI.\n" +
+        "   - Đang thảo luận → tiếp tục chat.\n" +
         "\n" +
-        "Bước 2 — Khi đã hiểu User muốn gì:\n" +
-        "- Cần thông tin mới → gọi WEB (JSON).\n" +
-        "- Cần sản phẩm cụ thể (code, văn dài) → giao LÍNH (JSON).\n" +
+        "2. Khi User ĐÃ QUYẾT ĐỊNH làm (bạn TỰ ĐỌC ngữ cảnh để hiểu):\n" +
+        "   - Cần sản phẩm (code/văn) → giao LÍNH.\n" +
+        "   - Cần thông tin mới → gọi WEB.\n" +
         "\n" +
-        "QUY TẮC BẮT BUỘC:\n" +
-        "- BẠN KHÔNG ĐƯỢC TỰ VIẾT CODE.\n" +
-        "- BẠN KHÔNG ĐƯỢC TỰ VIẾT VĂN DÀI.\n" +
-        "- Việc nặng → LUÔN giao lính.\n" +
-        "- Chỉ chat/hỏi lại → trả text tự nhiên.\n" +
-        "- Có code → Sandbox tự chạy — bạn KHÔNG cần gọi.\n" +
+        "3. Bạn TỰ HIỂU khi nào User đã quyết định dựa vào NGỮ CẢNH — không cần từ khóa cứng.\n" +
+        "   Ví dụ User nói 'làm đi', 'triển đi', 'OK', 'chốt', 'bắt đầu' — tùy ngữ cảnh.\n" +
+        "   Nhưng nếu User chỉ đang mô tả / hỏi → CHƯA quyết định → tiếp tục chat.\n" +
+        "\n" +
+        "4. Khi có code:\n" +
+        "   - Sandbox TỰ CHẠY (bạn không cần gọi).\n" +
+        "   - Bạn báo User kết quả PASS/FAIL.\n" +
+        "   - Nếu FAIL → hướng dẫn User bấm 'Sửa tiếp'.\n" +
+        "\n" +
+        "5. Khi User bảo SỬA sau khi có code:\n" +
+        "   - Bạn hiểu là sửa → giao LÍNH taskType='fix-code'.\n" +
+        "\n" +
+        "6. Bạn KHÔNG ĐƯỢC tự viết code / văn dài — luôn giao LÍNH.\n" +
         "\n" +
         "CÁCH TRẢ LỜI:\n" +
         "\n" +
@@ -488,7 +489,7 @@ function parseBossOutput(text) {
 }
 
 // ============================================================
-// GỌI LÍNH + SANDBOX (BẮT BUỘC KHI CÓ CODE)
+// GỌI LÍNH + SANDBOX
 // ============================================================
 
 async function runSoldierWork({
@@ -573,17 +574,14 @@ async function runSoldierWork({
 
     soldierOutput = linh.text || "";
 
-    // ===== KIỂM TRA CÓ CODE THẬT KHÔNG =====
     const validation = validateCodeOutput(soldierOutput);
 
     if (validation.ok && validation.code) {
-      // ===== CÓ CODE → BẮT BUỘC SANDBOX =====
       language = validation.language || "html";
       initialCode = validation.code;
       break;
     }
 
-    // Không có code → kiểm tra có cần retry không
     const needsCode =
       format.taskType === "code" ||
       format.taskType === "fix-code" ||
@@ -613,7 +611,6 @@ async function runSoldierWork({
       continue;
     }
 
-    // Không cần code → dừng, không Sandbox
     break;
   }
 
@@ -623,11 +620,9 @@ async function runSoldierWork({
     taskId: currentGiao.taskId,
   });
 
-  // ============================================================
-  // SANDBOX — BẮT BUỘC KHI CÓ CODE THẬT
-  // ============================================================
+  // ===== SANDBOX — BẮT BUỘC KHI CÓ CODE =====
   if (initialCode) {
-    await logInfo("BOSS: có code → BẮT BUỘC Sandbox", {
+    await logInfo("BOSS: có code → Sandbox", {
       userId,
       conversationId,
       language,
@@ -638,9 +633,8 @@ async function runSoldierWork({
     let iteration = 0;
 
     while (true) {
-      // Kiểm tra ngân sách 5 phút
       if (Date.now() - startTime > SANDBOX_TIME_BUDGET_MS) {
-        await logWarn("BOSS: HẾT 5 phút — trả code tạm + nút Sửa tiếp", {
+        await logWarn("BOSS: hết 5 phút → trả code + nút Sửa tiếp", {
           userId,
           conversationId,
           iterations: iteration,
@@ -651,7 +645,7 @@ async function runSoldierWork({
 
       iteration += 1;
 
-      await logInfo(`BOSS: Sandbox — vòng ${iteration}`, {
+      await logInfo(`BOSS: Sandbox vòng ${iteration}`, {
         userId,
         conversationId,
         elapsedMs: Date.now() - startTime,
@@ -671,7 +665,6 @@ async function runSoldierWork({
         attempts: iteration,
       };
 
-      // PASS → dừng
       if (testRes.ok) {
         await logInfo("BOSS: Sandbox PASS", {
           userId,
@@ -682,7 +675,6 @@ async function runSoldierWork({
         break;
       }
 
-      // FAIL → BOSS sửa
       const lastError = testRes.stderr || testRes.error || "Không rõ";
 
       await logWarn(`BOSS: Sandbox FAIL vòng ${iteration}`, {
@@ -758,7 +750,7 @@ async function runSoldierWork({
       });
 
       if (!fixLinh.ok || !fixLinh.text) {
-        await logWarn("BOSS: lính sửa thất bại — tiếp tục vòng", {
+        await logWarn("BOSS: lính sửa thất bại — tiếp tục", {
           error: fixLinh.error,
         });
         continue;
@@ -773,7 +765,6 @@ async function runSoldierWork({
       }
     }
 
-    // Lưu code cuối
     try {
       const saved = await saveArtifact({
         userId,
@@ -792,12 +783,6 @@ async function runSoldierWork({
     }
 
     soldierOutput = initialCode;
-  } else {
-    await logInfo("BOSS: không có code → bỏ qua Sandbox", {
-      userId,
-      conversationId,
-      taskType: format.taskType,
-    });
   }
 
   return {
@@ -899,7 +884,7 @@ function parseBossFixFormat(text, originalFormat, attempt, error) {
 }
 
 // ============================================================
-// BOSS TRẢ LỜI CUỐI
+// BOSS TRẢ LỜI CUỐI — BÁO PASS/FAIL + GỢI Ý SỬA TIẾP
 // ============================================================
 
 async function bossFinalAnswer({
@@ -923,13 +908,18 @@ async function bossFinalAnswer({
         "Bạn là Rồng Thần. Vừa nhận kết quả từ lính.\n" +
         "Đọc kết quả → trả lời User tự nhiên, thân thiện.\n" +
         "\n" +
-        "QUY TẮC:\n" +
+        "QUY TẮC BẮT BUỘC:\n" +
         "1. Tiếng Việt tự nhiên.\n" +
         "2. KHÔNG nhắc 'lính', 'Sandbox', 'giao việc'.\n" +
         "3. KHÔNG dùng LaTeX hay $$.\n" +
-        "4. Code PASS → trình bày trong ```<lang>...``` đầy đủ.\n" +
-        "5. Code FAIL → thông báo chưa PASS, gợi ý 'Sửa tiếp'.\n" +
-        "6. Văn bản → trình bày hoàn chỉnh.\n" +
+        "4. Nếu có code VÀ Sandbox PASS:\n" +
+        "   - Nói rõ: 'Code đã vượt qua kiểm thử'.\n" +
+        "   - Trình bày code trong ```<lang>...``` đầy đủ.\n" +
+        "5. Nếu có code VÀ Sandbox FAIL hoặc chưa PASS:\n" +
+        "   - Nói rõ: 'Code chưa vượt qua kiểm thử'.\n" +
+        "   - Hướng dẫn User: 'Bạn có thể bấm nút 🔧 Sửa tiếp để mình tiếp tục sửa'.\n" +
+        "   - Trình bày code hiện tại để User xem.\n" +
+        "6. Nếu là văn bản → trình bày hoàn chỉnh.\n" +
         "7. Không bịa thêm.",
     },
   ];
@@ -946,19 +936,26 @@ async function bossFinalAnswer({
     "YÊU CẦU:",
     userRequest,
     "",
-    "KẾT QUẢ:",
+    "KẾT QUẢ TỪ LÍNH:",
     "```",
     soldierOutput || "(không có)",
     "```",
     "",
-    `SANDBOX: ${sandboxStatus}`,
+    `TRẠNG THÁI KIỂM THỬ SANDBOX: ${sandboxStatus}`,
   ];
 
-  if (isCode) lines.push(`NGÔN NGỮ: ${language}`);
-  if (webContext) lines.push("", "DỮ LIỆU WEB:", webContext);
-  if (resumeAvailable) {
-    lines.push("", "LƯU Ý: Code chưa PASS — thông báo User có thể bấm 'Sửa tiếp'.");
+  if (isCode) {
+    lines.push(`NGÔN NGỮ: ${language}`);
+    if (sandboxStatus === "passed") {
+      lines.push("→ Code ĐÃ VƯỢT QUA kiểm thử. Báo User thành công.");
+    } else {
+      lines.push(
+        "→ Code CHƯA vượt qua kiểm thử. Báo User chưa PASS + gợi ý bấm 'Sửa tiếp'."
+      );
+    }
   }
+
+  if (webContext) lines.push("", "DỮ LIỆU WEB:", webContext);
 
   lines.push("", "Viết câu trả lời hoàn chỉnh cho User.");
 
@@ -1001,7 +998,7 @@ function formatFinalFallback({
   }
 
   if (resumeAvailable) {
-    return `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
+    return `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\`\n\nBạn có thể bấm nút **🔧 Sửa tiếp** để mình tiếp tục sửa.`;
   }
 
   return `\`\`\`${language}\n${soldierOutput}\n\`\`\``;
@@ -1317,11 +1314,11 @@ async function runChunkedDelegate({
 
   let finalText = outputs.join("\n\n");
   let codeMeta = null;
+  let sandboxStatus = "not_run";
 
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
 
-    // Sandbox code ghép
     try {
       const testRes = await chayKiemThu({
         userId,
@@ -1329,6 +1326,7 @@ async function runChunkedDelegate({
         language: lastLanguage,
         code: mergedCode,
       });
+      sandboxStatus = testRes.ok ? "passed" : "failed";
 
       await logInfo("BOSS: Sandbox code ghép", {
         userId,
@@ -1356,7 +1354,11 @@ async function runChunkedDelegate({
       /* bỏ qua */
     }
 
-    finalText = `Đã tạo code.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
+    if (sandboxStatus === "passed") {
+      finalText = `✅ Code đã vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
+    } else {
+      finalText = `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\`\n\nBạn có thể bấm **🔧 Sửa tiếp** để mình tiếp tục sửa.`;
+    }
   }
 
   return {
@@ -1367,6 +1369,7 @@ async function runChunkedDelegate({
       code: codeMeta,
       chunked: true,
       chunkCount: chunks.length,
+      resumeAvailable: sandboxStatus === "failed",
     },
   };
 }
