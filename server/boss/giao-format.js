@@ -1,22 +1,25 @@
 // server/boss/giao-format.js
-// Nhiệm vụ: Giao format cho Tiểu Não xử lý.
-// Trả về: lính chính + danh sách lính dự phòng.
+// Nhiệm vụ: Giao format cho Tiểu Não.
+// Sửa: Truyền tokens để chọn Gemini khi yêu cầu dài.
 
 import { nhanFormat } from "../tieu-nao/nhan-format.js";
 import { docNhiemVu } from "../tieu-nao/doc-nhiem-vu.js";
 import { chonLinhTheoNhiemVu } from "../tieu-nao/chon-linh-theo-nhiem-vu.js";
 import { openTask } from "../state/theo-doi-nhiem-vu.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
+import { countTokens } from "../utils/token-counter.js";
 
 export async function giaoFormat({
   userId,
   conversationId,
   bossSessionId,
   format,
+  tokens = 0,
 }) {
   await logInfo("BOSS: bắt đầu giao format cho Tiểu Não", {
     userId,
     conversationId,
+    tokens,
   });
 
   const received = await nhanFormat(format);
@@ -33,9 +36,13 @@ export async function giaoFormat({
     return { ok: false, error: doc.error };
   }
 
+  // ============================================================
+  // CHỌN LÍNH — TRUYỀN TOKENS
+  // ============================================================
   const pick = await chonLinhTheoNhiemVu({
     userId,
     taskType: doc.taskType,
+    tokens,
   });
   if (!pick.ok) {
     await logWarn("BOSS: chọn lính lỗi", { error: pick.error });
@@ -56,7 +63,9 @@ export async function giaoFormat({
     taskId: String(task._id),
     taskType: doc.taskType,
     soldier: pick.soldier.name,
+    soldierProvider: pick.soldier.provider,
     totalCandidates: (pick.candidates || []).length,
+    tokens,
   });
 
   return {
@@ -65,7 +74,7 @@ export async function giaoFormat({
     soldier: pick.soldier,
     candidates: pick.candidates || [pick.soldier],
     taskType: doc.taskType,
-    format: received.format,  // ← trả về để dùng tiếp nếu cần
+    format: received.format,
   };
 }
 

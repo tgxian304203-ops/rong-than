@@ -1,22 +1,30 @@
 // server/tieu-nao/chon-linh-theo-nhiem-vu.js
 // Nhiệm vụ: Chọn lính (model) theo loại nhiệm vụ.
-// Trả về danh sách lính ứng viên (sắp theo sức mạnh) — không chỉ 1.
+// Sửa: Ưu tiên Gemini khi yêu cầu dài (> 20k tokens).
 
 import { layDanhSachUngVien } from "./danh-sach-ung-vien.js";
 import { locUngVien } from "./loc-ung-vien.js";
 import { logInfo, logWarn } from "../logs/ghi-log.js";
+import { LIMITS } from "../config/limits.js";
 
 // ============================================================
 // CHỌN LÍNH
 // ============================================================
 
-export async function chonLinhTheoNhiemVu({ userId, taskType }) {
+/**
+ * @param {object} p
+ * @param {string} p.userId
+ * @param {string} p.taskType
+ * @param {number} [p.tokens]   — số token ước tính của yêu cầu + lịch sử
+ * @returns {Promise<{ok: boolean, soldier?: object, candidates?: Array, error?: string}>}
+ */
+export async function chonLinhTheoNhiemVu({ userId, taskType, tokens = 0 }) {
   await logInfo(
-    `Tiểu Não: === BẮT ĐẦU CHỌN LÍNH cho nhiệm vụ "${taskType}" ===`,
-    { userId }
+    `Tiểu Não: === BẮT ĐẦU CHỌN LÍNH cho "${taskType}" ===`,
+    { userId, tokens }
   );
 
-  const candidates = layDanhSachUngVien(taskType);
+  let candidates = layDanhSachUngVien(taskType);
   if (!candidates || candidates.length === 0) {
     await logWarn("Tiểu Não: không có ứng viên lính nào cho nhiệm vụ", {
       userId,
@@ -28,8 +36,33 @@ export async function chonLinhTheoNhiemVu({ userId, taskType }) {
     };
   }
 
+  // ============================================================
+  // NẾU TOKENS LỚN → ƯU TIÊN GEMINI
+  // ============================================================
+  if (tokens > LIMITS.CONTEXT_TOKEN_GROQ_MAX) {
+    await logInfo(
+      `Tiểu Não: yêu cầu dài (${tokens} tokens) → ưu tiên Gemini`,
+      { userId, taskType }
+    );
+
+    const geminiFirst = [
+      { name: "gemini-3.1-flash-lite", provider: "gemini", priority: 0 },
+      { name: "gemini-3-flash", provider: "gemini", priority: 1 },
+      ...candidates,
+    ];
+
+    // Loại trùng
+    const seen = new Set();
+    candidates = geminiFirst.filter((c) => {
+      const key = `${c.provider}:${c.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   await logInfo(
-    `Tiểu Não: danh sách ứng viên lính gốc (${candidates.length} model)`,
+    `Tiểu Não: danh sách ứng viên lính (${candidates.length} model)`,
     {
       userId,
       candidates: candidates.map(
@@ -38,7 +71,6 @@ export async function chonLinhTheoNhiemVu({ userId, taskType }) {
     }
   );
 
-  // Lọc + sắp xếp theo sức mạnh
   const filtered = await locUngVien(candidates, {
     userId,
     taskType,
@@ -83,7 +115,7 @@ export async function chonLinhTheoNhiemVu({ userId, taskType }) {
   return {
     ok: true,
     soldier: linh,
-    candidates: filtered,  // ← trả TOÀN BỘ danh sách
+    candidates: filtered,
   };
 }
 

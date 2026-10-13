@@ -1,6 +1,6 @@
 // server/tieu-nao/goi-linh.js
-// Nhiệm vụ: Gọi lính.
-// Khi lính #1 lỗi → lính #2 nhận lỗi + prompt gốc → tiếp tục, không làm lại vô thức.
+// Nhiệm vụ: Gọi lính — thử lần lượt, dò động khi hết.
+// Log chi tiết lý do thất bại.
 
 import { listKeysByProvider, updateQuota } from "../db/tieuNaoKeys.js";
 import { saveResult } from "../db/taskResults.js";
@@ -19,6 +19,8 @@ import {
   batDauLamViec,
   ketThucLamViec,
 } from "./linh-dang-lam-viec.js";
+import { doTatCaModelDong } from "./danh-sach-ung-vien.js";
+import { layDiemSucManh } from "./bang-xep-hang-model.js";
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
 import openrouter from "../providers/openrouter.js";
@@ -26,7 +28,7 @@ import openrouter from "../providers/openrouter.js";
 const MODULES = { groq, gemini, openrouter };
 
 // ============================================================
-// GỌI LÍNH — THỬ LẦN LƯỢT VỚI NGỮ CẢNH TÍCH LŨY
+// GỌI LÍNH
 // ============================================================
 
 export async function goiLinh({
@@ -39,6 +41,7 @@ export async function goiLinh({
   temperature = 0.5,
   maxTokens = 4096,
   signal,
+  taskType = null,
 }) {
   if (!soldier || !soldier.name || !soldier.provider) {
     return { ok: false, error: "Thiếu thông tin lính" };
@@ -55,299 +58,345 @@ export async function goiLinh({
     firstSoldier: tryList[0]?.name,
   });
 
-  // Lịch sử lỗi — tích lũy qua từng lính
   const errorHistory = [];
+  const triedKeys = new Set();
 
   // ============================================================
-  // DUYỆT TỪNG LÍNH
+  // BƯỚC 1: THỬ CÁC ỨNG VIÊN TĨNH
   // ============================================================
   for (let soldierIdx = 0; soldierIdx < tryList.length; soldierIdx++) {
     const currentSoldier = tryList[soldierIdx];
+    triedKeys.add(`${currentSoldier.provider}:${currentSoldier.name}`);
 
-    const mod = MODULES[currentSoldier.provider];
-    if (!mod) {
-      errorHistory.push({
-        soldier: currentSoldier.name,
-        provider: currentSoldier.provider,
-        reason: "Provider không hỗ trợ",
-      });
-      await logWarn(`Tiểu Não: bỏ qua lính (provider không hỗ trợ)`, {
-        soldier: currentSoldier.name,
-      });
-      continue;
-    }
-
-    const keys = await listKeysByProvider(userId, currentSoldier.provider);
-    if (!keys || keys.length === 0) {
-      errorHistory.push({
-        soldier: currentSoldier.name,
-        provider: currentSoldier.provider,
-        reason: "Không có key",
-      });
-      await logInfo(`Tiểu Não: bỏ qua lính (không có key)`, {
-        soldier: currentSoldier.name,
-      });
-      continue;
-    }
-
-    await logInfo(`Tiểu Não: thử lính #${soldierIdx + 1}`, {
+    const result = await tryOneSoldier({
       userId,
       taskId,
-      soldier: currentSoldier.name,
-      provider: currentSoldier.provider,
-      hasErrorHistory: errorHistory.length > 0,
+      currentSoldier,
+      messages,
+      payload,
+      temperature,
+      maxTokens,
+      signal,
+      position: soldierIdx + 1,
     });
 
-    // ============================================================
-    // XÂY MESSAGES CÓ NGỮ CẢNH TỪ LÍNH TRƯỚC
-    // ============================================================
-    const messagesWithContext =
-      errorHistory.length > 0
-        ? buildMessagesWithHistory(messages, errorHistory, soldierIdx)
-        : messages;
-
-    // ============================================================
-    // XOAY KEY
-    // ============================================================
-    let lastOutput = "";
-    const localErrors = [];
-
-    for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
-      let anyAvailable = false;
-
-      for (const key of keys) {
-        if (key.quota === "out") continue;
-        anyAvailable = true;
-
-        const sub = await batDauLamViec({
-          taskId,
-          soldierModel: currentSoldier.name,
-          soldierProvider: currentSoldier.provider,
-          soldierKeyId: String(key._id),
-          payload,
-        });
-        const subTaskId = String(sub._id);
-
-        try {
-          const res = await mod.chat({
-            rawKey: key.rawKey,
-            model: currentSoldier.name,
-            messages: messagesWithContext,
-            temperature,
-            maxTokens,
-            signal,
-          });
-
-          if (res.ok && res.text) {
-            // ===== THÀNH CÔNG =====
-            await baoCaoConDung(currentSoldier.name, currentSoldier.provider);
-
-            await saveResult({
-              taskId,
-              subTaskId,
-              status: "success",
-              output: res.text,
-              meta: {
-                usage: res.usage,
-                model: currentSoldier.name,
-                position: soldierIdx + 1,
-              },
-            });
-
-            await ketThucLamViec(subTaskId);
-
-            // Dọn subtask lỗi trước đó
-            await cleanupFailedSubTasks(taskId, subTaskId);
-
-            await logInfo(`Tiểu Não: LÍNH THÀNH CÔNG`, {
-              userId,
-              taskId,
-              soldier: currentSoldier.name,
-              provider: currentSoldier.provider,
-              position: soldierIdx + 1,
-              hadContext: errorHistory.length > 0,
-            });
-
-            return {
-              ok: true,
-              text: res.text,
-              usage: res.usage,
-              subTaskId,
-              soldier: currentSoldier,
-              keyId: String(key._id),
-            };
-          }
-
-          // Không có output hoặc lỗi
-          const errMsg = res.error || "Không rõ";
-          lastOutput = res.text || "";
-
-          await saveResult({
-            taskId,
-            subTaskId,
-            status: "error",
-            output: lastOutput,
-            meta: {
-              error: errMsg,
-              model: currentSoldier.name,
-              position: soldierIdx + 1,
-            },
-          });
-          await setSubTaskStatus(subTaskId, "skipped");
-
-          localErrors.push(errMsg);
-        } catch (err) {
-          const msg = String(err?.message || "").toLowerCase();
-          const errText = err?.message || "Lỗi không rõ";
-
-          if (
-            msg.includes("quota") ||
-            msg.includes("429") ||
-            msg.includes("rate") ||
-            msg.includes("invalid") ||
-            msg.includes("401") ||
-            msg.includes("403")
-          ) {
-            await updateQuota(key._id, "out");
-
-            if (
-              msg.includes("quota") ||
-              msg.includes("429") ||
-              msg.includes("rate")
-            ) {
-              await baoCaoHetQuota(
-                currentSoldier.name,
-                currentSoldier.provider
-              );
-            }
-
-            await saveResult({
-              taskId,
-              subTaskId,
-              status: "error",
-              output: lastOutput,
-              meta: {
-                error: errText,
-                model: currentSoldier.name,
-                position: soldierIdx + 1,
-              },
-            });
-            await setSubTaskStatus(subTaskId, "skipped");
-
-            localErrors.push(errText);
-
-            await logWarn(`Tiểu Não: key lỗi, xoay key`, {
-              userId,
-              soldier: currentSoldier.name,
-              keyId: String(key._id),
-            });
-            continue;
-          }
-
-          // Lỗi khác
-          await baoCaoLoi(
-            currentSoldier.name,
-            currentSoldier.provider,
-            errText
-          );
-          await saveResult({
-            taskId,
-            subTaskId,
-            status: "error",
-            output: lastOutput,
-            meta: {
-              error: errText,
-              model: currentSoldier.name,
-              position: soldierIdx + 1,
-            },
-          });
-          await setSubTaskStatus(subTaskId, "skipped");
-          localErrors.push(errText);
-        }
-      }
-
-      if (!anyAvailable) break;
+    if (result.ok) {
+      await cleanupFailedSubTasks(taskId, result.subTaskId);
+      return {
+        ok: true,
+        text: result.text,
+        usage: result.usage,
+        subTaskId: result.subTaskId,
+        soldier: currentSoldier,
+        keyId: result.keyId,
+      };
     }
 
-    // Lính này thất bại → ghi vào lịch sử
     errorHistory.push({
       soldier: currentSoldier.name,
       provider: currentSoldier.provider,
-      errors: localErrors.slice(0, 3),
-      partialOutput: lastOutput.slice(0, 500), // tối đa 500 ký tự
+      reason: result.reason,
+      detail: result.detail,
     });
 
     await logWarn(
-      `Tiểu Não: lính #${soldierIdx + 1} thất bại — chuyển lính tiếp theo (có ngữ cảnh)`,
+      `Tiểu Não: lính #${soldierIdx + 1} (${currentSoldier.name}) thất bại — lý do: "${result.reason}"`,
       {
         userId,
         soldier: currentSoldier.name,
-        errors: localErrors.slice(0, 3),
+        provider: currentSoldier.provider,
+        reason: result.reason,
+        detail: result.detail,
       }
     );
   }
 
   // ============================================================
-  // HẾT TẤT CẢ LÍNH — DỌN
+  // BƯỚC 2: DÒ ĐỘNG TẤT CẢ MODEL KHI HẾT TĨNH
+  // ============================================================
+  await logWarn(
+    `Tiểu Não: hết ứng viên tĩnh (${tryList.length}) — dò động tất cả model`,
+    { userId, taskId }
+  );
+
+  const dynamic = await doTatCaModelDong({ userId });
+
+  // Sắp xếp theo sức mạnh
+  const withScore = dynamic
+    .filter((d) => !triedKeys.has(`${d.provider}:${d.name}`))
+    .map((d) => ({
+      ...d,
+      _score: layDiemSucManh(d.name, taskType),
+    }))
+    .sort((a, b) => b._score - a._score);
+
+  await logInfo(`Tiểu Não: dò động được ${withScore.length} model mới`, {
+    userId,
+    top10: withScore.slice(0, 10).map((c) => `${c.name} (${c.provider})`),
+  });
+
+  // ============================================================
+  // BƯỚC 3: THỬ CÁC MODEL ĐỘNG
+  // ============================================================
+  for (let i = 0; i < withScore.length; i++) {
+    const currentSoldier = {
+      name: withScore[i].name,
+      provider: withScore[i].provider,
+      priority: 99,
+      _dynamic: true,
+    };
+
+    const result = await tryOneSoldier({
+      userId,
+      taskId,
+      currentSoldier,
+      messages,
+      payload,
+      temperature,
+      maxTokens,
+      signal,
+      position: `dyn#${i + 1}`,
+    });
+
+    if (result.ok) {
+      await cleanupFailedSubTasks(taskId, result.subTaskId);
+      await logInfo(
+        `Tiểu Não: LÍNH ĐỘNG THÀNH CÔNG (${currentSoldier.name})`,
+        { userId, taskId }
+      );
+
+      return {
+        ok: true,
+        text: result.text,
+        usage: result.usage,
+        subTaskId: result.subTaskId,
+        soldier: currentSoldier,
+        keyId: result.keyId,
+      };
+    }
+
+    errorHistory.push({
+      soldier: currentSoldier.name,
+      provider: currentSoldier.provider,
+      reason: result.reason,
+      detail: result.detail,
+    });
+
+    // Chỉ log 3 model động đầu tiên để tránh spam
+    if (i < 3 || i % 5 === 0) {
+      await logWarn(
+        `Tiểu Não: lính động (${currentSoldier.name}) thất bại — lý do: "${result.reason}"`,
+        {
+          userId,
+          soldier: currentSoldier.name,
+          provider: currentSoldier.provider,
+          reason: result.reason,
+        }
+      );
+    }
+  }
+
+  // ============================================================
+  // HẾT SẠCH
   // ============================================================
   await cleanupFailedSubTasks(taskId, null);
 
   await logWarn("Tiểu Não: TẤT CẢ LÍNH đều thất bại", {
     userId,
     taskId,
-    totalTried: tryList.length,
-    errorHistory,
+    totalTried: errorHistory.length,
+    reasons: errorHistory.slice(0, 5).map(
+      (h) => `${h.soldier}: ${h.reason}`
+    ),
   });
 
   return {
     ok: false,
-    error: `Đã thử ${tryList.length} lính nhưng tất cả đều thất bại`,
+    error: `Đã thử ${errorHistory.length} lính nhưng tất cả đều thất bại`,
     errorHistory,
   };
 }
 
 // ============================================================
-// XÂY MESSAGES CÓ NGỮ CẢNH LÍNH TRƯỚC
+// THỬ 1 LÍNH
 // ============================================================
 
-function buildMessagesWithHistory(baseMessages, errorHistory, soldierIdx) {
-  if (!errorHistory || errorHistory.length === 0) return baseMessages;
+async function tryOneSoldier({
+  userId,
+  taskId,
+  currentSoldier,
+  messages,
+  payload,
+  temperature,
+  maxTokens,
+  signal,
+  position,
+}) {
+  const mod = MODULES[currentSoldier.provider];
+  if (!mod) {
+    return { ok: false, reason: "Provider không hỗ trợ", detail: currentSoldier.provider };
+  }
 
-  const lines = [
-    `[NGỮ CẢNH TỪ ${errorHistory.length} LÍNH TRƯỚC]`,
-    `Bạn là lính #${soldierIdx + 1}. Các lính trước đã thất bại.`,
-    "",
-    "Lịch sử lỗi:",
-  ];
+  const keys = await listKeysByProvider(userId, currentSoldier.provider);
+  if (!keys || keys.length === 0) {
+    return { ok: false, reason: "Không có key", detail: currentSoldier.provider };
+  }
 
-  errorHistory.forEach((h, i) => {
-    lines.push(`- Lính #${i + 1} (${h.soldier}):`);
-    if (h.errors && h.errors.length > 0) {
-      h.errors.forEach((e) => lines.push(`  + Lỗi: ${e}`));
+  const errors = [];
+
+  for (let round = 0; round < LIMITS.KEY_ROTATION_MAX_ROUNDS; round++) {
+    let anyAvailable = false;
+
+    for (const key of keys) {
+      if (key.quota === "out") continue;
+      anyAvailable = true;
+
+      const sub = await batDauLamViec({
+        taskId,
+        soldierModel: currentSoldier.name,
+        soldierProvider: currentSoldier.provider,
+        soldierKeyId: String(key._id),
+        payload,
+      });
+      const subTaskId = String(sub._id);
+
+      try {
+        const res = await mod.chat({
+          rawKey: key.rawKey,
+          model: currentSoldier.name,
+          messages,
+          temperature,
+          maxTokens,
+          signal,
+        });
+
+        if (res.ok && res.text) {
+          await baoCaoConDung(currentSoldier.name, currentSoldier.provider);
+
+          await saveResult({
+            taskId,
+            subTaskId,
+            status: "success",
+            output: res.text,
+            meta: {
+              usage: res.usage,
+              model: currentSoldier.name,
+              position,
+            },
+          });
+
+          await ketThucLamViec(subTaskId);
+
+          return {
+            ok: true,
+            text: res.text,
+            usage: res.usage,
+            subTaskId,
+            keyId: String(key._id),
+          };
+        }
+
+        // Không có output
+        const errMsg = res.error || "Không có output";
+        await saveResult({
+          taskId,
+          subTaskId,
+          status: "error",
+          output: res.text || "",
+          meta: { error: errMsg, model: currentSoldier.name },
+        });
+        await setSubTaskStatus(subTaskId, "skipped");
+        errors.push(errMsg);
+
+        return {
+          ok: false,
+          reason: classifyError(errMsg),
+          detail: errMsg,
+        };
+      } catch (err) {
+        const msg = String(err?.message || "").toLowerCase();
+        const errText = err?.message || "Lỗi không rõ";
+
+        if (
+          msg.includes("quota") ||
+          msg.includes("429") ||
+          msg.includes("rate") ||
+          msg.includes("invalid") ||
+          msg.includes("401") ||
+          msg.includes("403")
+        ) {
+          await updateQuota(key._id, "out");
+
+          if (msg.includes("quota") || msg.includes("429") || msg.includes("rate")) {
+            await baoCaoHetQuota(currentSoldier.name, currentSoldier.provider);
+          }
+
+          await saveResult({
+            taskId,
+            subTaskId,
+            status: "error",
+            output: "",
+            meta: { error: errText, model: currentSoldier.name },
+          });
+          await setSubTaskStatus(subTaskId, "skipped");
+          errors.push(errText);
+          continue;
+        }
+
+        await baoCaoLoi(
+          currentSoldier.name,
+          currentSoldier.provider,
+          errText
+        );
+        await saveResult({
+          taskId,
+          subTaskId,
+          status: "error",
+          output: "",
+          meta: { error: errText, model: currentSoldier.name },
+        });
+        await setSubTaskStatus(subTaskId, "skipped");
+        errors.push(errText);
+
+        return {
+          ok: false,
+          reason: classifyError(errText),
+          detail: errText,
+        };
+      }
     }
-    if (h.partialOutput && h.partialOutput.trim()) {
-      lines.push(`  + Output dở (không hoàn chỉnh):`);
-      lines.push("  ```");
-      lines.push("  " + h.partialOutput.slice(0, 300).replace(/\n/g, "\n  "));
-      lines.push("  ```");
-    }
-  });
 
-  lines.push(
-    "",
-    "Hãy hoàn thành nhiệm vụ gốc bên dưới.",
-    "LƯU Ý:",
-    "- Nếu lính trước để lại output dở → có thể tiếp tục từ đó.",
-    "- Nếu không có output → làm lại nhưng TRÁNH các lỗi trên.",
-    "- Trả về kết quả hoàn chỉnh, đúng yêu cầu."
-  );
+    if (!anyAvailable) break;
+  }
 
-  const contextMsg = {
-    role: "user",
-    content: lines.join("\n"),
+  return {
+    ok: false,
+    reason: "Hết key khả dụng",
+    detail: errors.slice(0, 2).join(" | "),
   };
+}
 
-  return [...baseMessages, contextMsg];
+// ============================================================
+// PHÂN LOẠI LỖI
+// ============================================================
+
+function classifyError(errMsg) {
+  const m = String(errMsg || "").toLowerCase();
+
+  if (m.includes("context") && m.includes("long")) return "Context too long";
+  if (m.includes("context") && m.includes("length")) return "Context too long";
+  if (m.includes("token") && m.includes("limit")) return "Token limit";
+  if (m.includes("too many tokens")) return "Token limit";
+  if (m.includes("quota")) return "Hết quota";
+  if (m.includes("429") || m.includes("rate")) return "Rate limit";
+  if (m.includes("401") || m.includes("403")) return "Key không hợp lệ";
+  if (m.includes("timeout")) return "Timeout";
+  if (m.includes("network") || m.includes("fetch")) return "Lỗi mạng";
+  if (m.includes("500") || m.includes("502") || m.includes("503")) return "Server provider lỗi";
+  if (m.includes("model") && m.includes("not")) return "Model không tồn tại";
+  if (m.includes("max") && m.includes("token")) return "Vượt max_tokens";
+
+  return "Lỗi không rõ";
 }
 
 // ============================================================
