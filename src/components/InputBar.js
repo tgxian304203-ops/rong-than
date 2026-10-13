@@ -1,9 +1,12 @@
 // src/components/InputBar.js
-// Nhiệm vụ: CHỈ hiển thị ô input nổi — không có thanh/viền bao quanh.
+// Nhiệm vụ: Thanh nhập tin nhắn + tệp đính kèm.
 //
-// Yêu cầu:
-//   - Không có thanh dưới cùng.
-//   - Chỉ có ô input (nút ＋, textarea, nút ➤) nổi trên nền chat.
+// QUY TẮC PHẦN 04, mục 2.G:
+//   - Thanh nhập cách bàn phím 1mm (~4px).
+//
+// Phân biệt Android và iPhone:
+//   - Android: layout co lại khi bàn phím mở → dùng paddingBottom: 4px.
+//   - iPhone: layout KHÔNG co → dùng transform translateY + visualViewport.
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
@@ -14,15 +17,61 @@ const MAX_LINES = 6;
 const LINE_HEIGHT = 22;
 const PADDING_Y = 22;
 
+// 1mm ≈ 3.78px → dùng 4px
+const KEYBOARD_GAP_PX = 4;
+
+// ============================================================
+// DETECT IPHONE / IPAD
+// ============================================================
+function isIOS() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return (
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
 export default function InputBar({ onSend, sending = false, disabled = false }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+
+  const iOS = isIOS();
+
+  // ============================================================
+  // DETECT BÀN PHÍM — CHỈ CẦN CHO IPHONE
+  // ============================================================
+  useEffect(() => {
+    if (!iOS) return; // Android không cần
+
+    if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const update = () => {
+      // Chiều cao bàn phím = chênh lệch giữa innerHeight và visualViewport
+      const gap = window.innerHeight - (vv.height + vv.offsetTop);
+      setKeyboardOffset(gap > 0 ? gap : 0);
+    };
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [iOS]);
 
   // ============================================================
   // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
@@ -83,15 +132,30 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   const canSend = !isBlankMessage(text, attachments) && !sending && !disabled;
 
+  // ============================================================
+  // TÍNH TOÁN STYLE
+  // ============================================================
+  // iPhone: dùng transform translateY để đẩy lên đúng khoảng bàn phím
+  //   + padding bottom 4px (1mm)
+  // Android: giữ nguyên — layout tự co → chỉ cần padding bottom 4px
+  const iosTranslateY =
+    iOS && keyboardOffset > 0
+      ? -(keyboardOffset + KEYBOARD_GAP_PX)
+      : 0;
+
   return (
     <div
       style={{
-        // KHÔNG có viền, KHÔNG có nền, KHÔNG có thanh bao quanh.
-        // Chỉ có ô input nổi ở giữa.
-        padding: "8px 8px 8px 8px",
-        // Khoảng cách 1mm phía dưới ô input
-        paddingBottom: "calc(4px + env(safe-area-inset-bottom, 0px))",
+        position: "relative",
+        transform: iOS ? `translateY(${iosTranslateY}px)` : "none",
+        transition: iOS ? "transform 0.15s ease-out" : "none",
+        // Padding bottom = 4px (1mm) — cho cả 2 nền tảng
+        paddingBottom: `${KEYBOARD_GAP_PX}px`,
+        paddingLeft: "var(--space-2)",
+        paddingRight: "var(--space-2)",
+        paddingTop: "var(--space-2)",
         backgroundColor: "transparent",
+        zIndex: 20,
       }}
     >
       {/* INPUT ẨN */}
@@ -150,7 +214,7 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         </div>
       ) : null}
 
-      {/* Ô INPUT — CHỈ CÓ Ô NÀY, KHÔNG CÓ THANH BAO QUANH */}
+      {/* Ô INPUT */}
       <div
         className="glass-inputbar"
         style={{
