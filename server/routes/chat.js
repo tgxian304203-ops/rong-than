@@ -1,14 +1,15 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — pipeline theo 7 bước dự án.
+// Nhiệm vụ: API chat — BOSS nói chuyện trực tiếp với User.
 //
-// LUỒNG HOẠT ĐỘNG:
-//   Bước 1: Rồng Thần nhận tin nhắn
-//   Bước 2: Xác nhận BOSS phù hợp
-//   Bước 3: BOSS tiếp quản cuộc trò chuyện
-//   Bước 4: BOSS viết format cho lính (nếu cần web → BOSS tự tra)
-//   Bước 5: Lính làm → trả đáp án cho BOSS
-//   Bước 6: Nếu code → BOSS test Sandbox
-//   Bước 7: BOSS trả kết quả cho User (đúng → trả, sai → lặp sửa)
+// KIẾN TRÚC:
+//   1. Rồng Thần chuyển tin User → BOSS (trực tiếp)
+//   2. BOSS đọc tin + quyết định:
+//      - "reply"    → BOSS tự trả lời (chat, hỏi đáp)
+//      - "delegate" → BOSS viết format ra lệnh cho lính
+//      - "web"      → BOSS tự tra web
+//   3. Nếu delegate → Tiểu Não gọi lính → lính làm → trả BOSS
+//   4. Nếu code → BOSS test Sandbox → PASS/FAIL
+//   5. BOSS trả kết quả cho User
 
 import express from "express";
 import multer from "multer";
@@ -38,9 +39,7 @@ import { nhanKetQuaTuBoss } from "../gateway/nhan-ket-qua-tu-boss.js";
 import { traKetQuaChoUser } from "../gateway/tra-ket-qua-cho-user.js";
 
 import { nhanYeuCau as bossNhanYeuCau } from "../boss/nhan-yeu-cau.js";
-import { phanTichYeuCau } from "../boss/phan-tich-yeu-cau.js";
 import { traWeb, formatWebResults } from "../boss/tra-web.js";
-import { vietFormat } from "../boss/viet-format.js";
 import { giaoFormat } from "../boss/giao-format.js";
 import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
 import { danhGiaKetQua } from "../boss/danh-gia-ket-qua.js";
@@ -111,7 +110,7 @@ async function loadConversationHistory(conversationId, limit) {
 }
 
 // ============================================================
-// PIPELINE BOSS — 7 BƯỚC
+// PIPELINE BOSS
 // ============================================================
 
 async function runBossPipeline({
@@ -121,9 +120,7 @@ async function runBossPipeline({
   userLabel,
   signal,
 }) {
-  // ============================================================
-  // BƯỚC 1: RỒNG THẦN NHẬN TIN NHẮN
-  // ============================================================
+  // ===== BƯỚC 1: RỒNG THẦN NHẬN TIN =====
   const recv = await bossNhanYeuCau({
     userId,
     conversationId,
@@ -132,7 +129,6 @@ async function runBossPipeline({
   });
   if (!recv.ok) return { ok: false, error: recv.error };
 
-  // Đọc lịch sử
   const historyForBoss = await loadConversationHistory(
     conversationId,
     HISTORY_FOR_BOSS
@@ -143,133 +139,387 @@ async function runBossPipeline({
     -1
   );
 
-  // ============================================================
-  // BƯỚC 2: XÁC NHẬN BOSS PHÙ HỢP
-  // ============================================================
-  // Đại Não phân tích yêu cầu + chọn BOSS
-  const analysis = await phanTichYeuCau({
-    userId,
-    conversationId,
-    userRequest,
-    userLabel,
-    history: historyForBossCtx,
-    signal,
-  });
-  if (!analysis.ok) return { ok: false, error: analysis.error };
-
-  if (analysis.analysis.strategy === "chunk") {
-    return await runChunkedPipeline({
-      userId,
-      conversationId,
-      userRequest,
-      userLabel,
-      analysis: analysis.analysis,
-      historyForBoss: historyForBossCtx,
-      historyForSoldier,
-      signal,
-    });
-  }
-
-  // ============================================================
-  // BƯỚC 3: BOSS TIẾP QUẢN CUỘC TRÒ CHUYỆN
-  // ============================================================
+  // ===== BƯỚC 2: CHỌN BOSS =====
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
-  const bossSession = await goiBoss({
+  // ===== BƯỚC 3: BOSS ĐỌC TIN USER + QUYẾT ĐỊNH =====
+  const decisionMessages = buildBossDecisionMessages({
+    userRequest,
+    history: historyForBossCtx,
+  });
+
+  let bossRes = await goiBoss({
     userId,
     conversationId,
     boss: bossPick.boss,
     candidates: bossPick.candidates,
-    messages: [
-      {
-        role: "system",
-        content:
-          "Bạn là BOSS của Rồng Thần — người tiếp quản cuộc trò chuyện với User.\n" +
-          "Bạn là model AI — KHÔNG phải code.\n" +
-          "Bạn sẽ:\n" +
-          "1. Đọc yêu cầu User.\n" +
-          "2. Nếu cần web → tự tra web.\n" +
-          "3. Viết format điều phối lính (model khác).\n" +
-          "4. Nhận kết quả từ lính.\n" +
-          "5. Nếu code → kiểm Sandbox.\n" +
-          "6. Trả câu trả lời cuối cho User.\n" +
-          "KHÔNG dùng LaTeX hay $$.",
-      },
-      { role: "user", content: userRequest },
-    ],
+    messages: decisionMessages,
     temperature: 0.4,
-    maxTokens: 2048,
+    maxTokens: 4096,
     signal,
   });
 
-  let bossRes = bossSession;
   if (!bossRes.ok) {
     const handoff = await banGiaoTrangThai({ userId, conversationId });
     const handoffPrompt = handoff.ok ? buildHandoffPrompt(handoff.handoff) : "";
+    const messagesWithHandoff = handoffPrompt
+      ? [...decisionMessages, { role: "system", content: handoffPrompt }]
+      : decisionMessages;
+
     bossRes = await goiBossMoi({
       userId,
       conversationId,
       oldSession: null,
-      messages: handoffPrompt
-        ? [{ role: "system", content: handoffPrompt }]
-        : [],
+      messages: messagesWithHandoff,
       temperature: 0.4,
-      maxTokens: 2048,
+      maxTokens: 4096,
       signal,
     });
+  }
+
+  if (!bossRes.ok || !bossRes.text) {
+    return {
+      ok: false,
+      error: bossRes.error || "BOSS không trả lời được",
+    };
   }
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
 
-  // ============================================================
-  // BƯỚC 4: BOSS VIẾT FORMAT CHO LÍNH
-  // ============================================================
-  let webContext = "";
+  // ===== BƯỚC 4: PARSE JSON QUYẾT ĐỊNH =====
+  const decision = parseBossDecision(bossRes.text);
 
-  // Nếu cần web → BOSS tự tra web (không gọi lính)
-  if (analysis.analysis.needWeb) {
+  await logInfo("BOSS: quyết định xử lý", {
+    userId,
+    conversationId,
+    action: decision.action,
+    hasFormat: !!decision.format,
+  });
+
+  // ============================================================
+  // TRƯỜNG HỢP 1: BOSS TỰ TRẢ LỜI
+  // ============================================================
+  if (decision.action === "reply") {
+    await logInfo("BOSS: tự trả lời User", {
+      userId,
+      conversationId,
+      replyLength: String(decision.replyText || "").length,
+    });
+
+    return {
+      ok: true,
+      text: decision.replyText || "(BOSS không có nội dung)",
+      meta: {
+        action: "reply",
+        boss: bossRes.boss || bossPick.boss,
+      },
+    };
+  }
+
+  // ============================================================
+  // TRƯỜNG HỢP 2: BOSS TRA WEB
+  // ============================================================
+  if (decision.action === "web") {
+    await logInfo("BOSS: tự tra web", {
+      userId,
+      conversationId,
+      query: decision.webQuery,
+    });
+
     const web = await traWeb({
       userId,
       conversationId,
-      query: userRequest,
+      query: decision.webQuery || userRequest,
       signal,
     });
-    if (web.ok) webContext = formatWebResults(web.results);
+
+    const webContext = web.ok ? formatWebResults(web.results) : "";
+
+    // BOSS đọc kết quả web → trả lời User
+    const finalMessages = buildBossReadWebMessages({
+      userRequest,
+      webContext,
+      history: historyForBossCtx,
+    });
+
+    const finalRes = await goiBoss({
+      userId,
+      conversationId,
+      boss: bossPick.boss,
+      candidates: bossPick.candidates,
+      messages: finalMessages,
+      temperature: 0.5,
+      maxTokens: 4096,
+      signal,
+    });
+
+    return {
+      ok: true,
+      text: finalRes.ok
+        ? finalRes.text
+        : `Không tra được web. Lỗi: ${web.error || "không rõ"}`,
+      meta: {
+        action: "web",
+        boss: bossRes.boss || bossPick.boss,
+        web: { used: true, ok: web.ok },
+      },
+    };
   }
 
-  const formatRes = await vietFormat({
-    userId,
-    conversationId,
-    userRequest,
-    analysis: analysis.analysis,
-    webContext,
-    history: historyForBossCtx,
-  });
-  if (!formatRes.ok) return { ok: false, error: formatRes.error };
+  // ============================================================
+  // TRƯỜNG HỢP 3: BOSS GIAO LÍNH
+  // ============================================================
+  if (decision.action === "delegate") {
+    if (!decision.format) {
+      return { ok: false, error: "BOSS delegate nhưng thiếu format" };
+    }
 
+    await logInfo("BOSS: giao format cho lính", {
+      userId,
+      conversationId,
+      taskType: decision.format.taskType,
+    });
+
+    // ===== CHUNK NẾU YÊU CẦU DÀI =====
+    const requestTokens = countTokens(userRequest);
+    if (requestTokens > LIMITS.CONTEXT_TOKEN_GEMINI_MAX) {
+      return await runChunkedDelegate({
+        userId,
+        conversationId,
+        userRequest,
+        bossPick,
+        bossSessionId,
+        historyForBoss: historyForBossCtx,
+        historyForSoldier,
+        signal,
+      });
+    }
+
+    // ===== GỌI LÍNH =====
+    const result = await runSoldierWork({
+      userId,
+      conversationId,
+      userRequest,
+      bossPick,
+      bossSessionId,
+      format: decision.format,
+      historyForBoss: historyForBossCtx,
+      historyForSoldier,
+      needCode: decision.format.taskType === "code" ||
+        decision.format.taskType === "fix-code" ||
+        decision.format.needCode === true,
+      signal,
+    });
+
+    if (!result.ok) return result;
+
+    // ===== BOSS TRẢ KẾT QUẢ CUỐI CHO USER =====
+    const finalText = await bossFinalAnswer({
+      userId,
+      conversationId,
+      bossPick,
+      userRequest,
+      soldierOutput: result.soldierOutput,
+      isCode: result.isCode,
+      language: result.language,
+      sandboxStatus: result.sandboxStatus,
+      resumeAvailable: result.resumeAvailable,
+      webContext: "",
+      history: historyForBossCtx,
+      signal,
+    });
+
+    return {
+      ok: true,
+      text: finalText,
+      meta: {
+        action: "delegate",
+        boss: bossRes.boss || bossPick.boss,
+        soldier: result.soldier,
+        sandbox: result.sandboxMeta,
+        code: result.codeMeta,
+        resumeAvailable: result.resumeAvailable,
+        soldierAttempts: result.attempts,
+      },
+    };
+  }
+
+  // ===== Không rõ action =====
+  return {
+    ok: true,
+    text: decision.replyText || "(BOSS không xác định được yêu cầu)",
+    meta: { action: "unknown" },
+  };
+}
+
+// ============================================================
+// PROMPT: BOSS QUYẾT ĐỊNH
+// ============================================================
+
+function buildBossDecisionMessages({ userRequest, history = [] }) {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "Bạn là BOSS của Rồng Thần — model AI tiếp quản cuộc trò chuyện với User.\n" +
+        "\n" +
+        "NHIỆM VỤ:\n" +
+        "1. Đọc tin User.\n" +
+        "2. Quyết định xử lý:\n" +
+        "   - action='reply'    → tự trả lời (chào hỏi, hỏi đáp, tâm sự...)\n" +
+        "   - action='web'      → cần tra web → trả query\n" +
+        "   - action='delegate' → cần lính làm (viết code, viết văn, phân tích...)\n" +
+        "\n" +
+        "QUY TẮC BẮT BUỘC:\n" +
+        "- Chào hỏi, hỏi thăm, hỏi đáp đơn giản, tâm sự → action='reply'.\n" +
+        "- Cần thông tin mới/thời sự → action='web'.\n" +
+        "- Yêu cầu viết code/văn/phân tích → action='delegate'.\n" +
+        "\n" +
+        "TRẢ VỀ DUY NHẤT 1 JSON — không thêm gì khác:\n" +
+        "\n" +
+        "Nếu action='reply':\n" +
+        '{\n  "action": "reply",\n  "replyText": "câu trả lời của bạn cho User"\n}\n' +
+        "\n" +
+        "Nếu action='web':\n" +
+        '{\n  "action": "web",\n  "webQuery": "câu query tra web"\n}\n' +
+        "\n" +
+        "Nếu action='delegate':\n" +
+        '{\n' +
+        '  "action": "delegate",\n' +
+        '  "format": {\n' +
+        '    "taskType": "code|bulk|fix-code|summary|research|analysis|read-long-doc",\n' +
+        '    "goal": "mô tả nhiệm vụ cho lính",\n' +
+        '    "requirements": ["yêu cầu cụ thể"],\n' +
+        '    "constraints": ["ràng buộc"],\n' +
+        '    "expectedOutput": "kết quả mong đợi",\n' +
+        '    "needCode": true/false\n' +
+        '  }\n' +
+        '}\n' +
+        "\n" +
+        "QUY TẮC PHÂN LOẠI taskType:\n" +
+        "- Có từ 'tạo' → taskType = 'code' (viết web, app...)\n" +
+        "- Có từ 'viết' → taskType = 'bulk' (viết văn, bài luận...)\n" +
+        "- 'sửa code' → 'fix-code'.\n" +
+        "\n" +
+        "KHÔNG dùng LaTeX hay $$. Không thêm chữ nào ngoài JSON.",
+    },
+  ];
+
+  for (const m of history) {
+    if (!m.text || !m.text.trim()) continue;
+    messages.push({
+      role: m.role === "ai" ? "assistant" : "user",
+      content: m.text,
+    });
+  }
+
+  messages.push({ role: "user", content: userRequest });
+
+  return messages;
+}
+
+// ============================================================
+// PARSE JSON QUYẾT ĐỊNH
+// ============================================================
+
+function parseBossDecision(text) {
+  if (!text || typeof text !== "string") {
+    return { action: "reply", replyText: "(Không có nội dung)" };
+  }
+
+  // Bỏ ```json ... ``` nếu có
+  let s = text.trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    // Không phải JSON — coi như reply text
+    return { action: "reply", replyText: text };
+  }
+
+  try {
+    const obj = JSON.parse(s.slice(start, end + 1));
+    if (!obj.action) obj.action = "reply";
+    return obj;
+  } catch {
+    return { action: "reply", replyText: text };
+  }
+}
+
+// ============================================================
+// BOSS ĐỌC KẾT QUẢ WEB
+// ============================================================
+
+function buildBossReadWebMessages({ userRequest, webContext, history = [] }) {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "Bạn là BOSS của Rồng Thần. Bạn vừa tra web xong.\n" +
+        "Đọc dữ liệu web và trả lời User trực tiếp bằng tiếng Việt, tự nhiên.\n" +
+        "KHÔNG nhắc đến 'web', 'tra cứu', 'công cụ'.\n" +
+        "KHÔNG dùng LaTeX hay $$.\n" +
+        "Trích nguồn URL nếu có.",
+    },
+  ];
+
+  for (const m of history) {
+    if (!m.text || !m.text.trim()) continue;
+    messages.push({
+      role: m.role === "ai" ? "assistant" : "user",
+      content: m.text,
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: [
+      "Yêu cầu của User:",
+      userRequest,
+      "",
+      "Dữ liệu tra cứu:",
+      webContext || "(không có dữ liệu)",
+      "",
+      "Hãy trả lời User dựa trên dữ liệu trên.",
+    ].join("\n"),
+  });
+
+  return messages;
+}
+
+// ============================================================
+// GỌI LÍNH — LÀM VIỆC THEO FORMAT
+// ============================================================
+
+async function runSoldierWork({
+  userId,
+  conversationId,
+  userRequest,
+  bossPick,
+  bossSessionId,
+  format,
+  historyForBoss,
+  historyForSoldier,
+  needCode,
+  signal,
+}) {
+  // Giao format cho Tiểu Não
   const giao = await giaoFormat({
     userId,
     conversationId,
     bossSessionId,
-    format: formatRes.format,
-    tokens: countTokens(userRequest) +
+    format,
+    tokens:
+      countTokens(userRequest) +
       countMessagesTokens(
         historyForSoldier.map((m) => ({ role: m.role, content: m.text }))
       ),
   });
   if (!giao.ok) return { ok: false, error: giao.error };
 
-  // ============================================================
-  // BƯỚC 5: LÍNH LÀM → TRẢ ĐÁP ÁN CHO BOSS
-  // ============================================================
-  let soldierMessages = buildSoldierMessages({
-    format: formatRes.format,
-    webContext,
-    history: historyForSoldier,
-    userRequest,
-  });
-
+  // Gọi lính
   let attempt = 0;
   const MAX_ATTEMPTS = 3;
   let linh = null;
@@ -284,7 +534,14 @@ async function runBossPipeline({
     await logInfo(`BOSS: gọi lính — lần thử ${attempt}/${MAX_ATTEMPTS}`, {
       userId,
       conversationId,
-      needCode: analysis.analysis.needCode,
+      needCode,
+    });
+
+    const soldierMessages = buildSoldierMessages({
+      format,
+      history: historyForSoldier,
+      userRequest,
+      webContext: "",
     });
 
     linh = await goiLinh({
@@ -293,7 +550,7 @@ async function runBossPipeline({
       soldier: currentGiao.soldier,
       candidates: currentGiao.candidates,
       messages: soldierMessages,
-      payload: formatRes.format,
+      payload: format,
       temperature: 0.3,
       maxTokens: 8192,
       signal,
@@ -317,7 +574,7 @@ async function runBossPipeline({
 
     soldierOutput = linh.text || "";
 
-    if (analysis.analysis.needCode) {
+    if (needCode) {
       const validation = validateCodeOutput(soldierOutput);
 
       if (!validation.ok) {
@@ -327,17 +584,10 @@ async function runBossPipeline({
         );
 
         const fixFormat = buildWrongTypeFixFormat({
-          originalFormat: formatRes.format,
+          originalFormat: format,
           reason: validation.reason,
           badOutput: soldierOutput,
           attempt,
-        });
-
-        soldierMessages = buildSoldierMessages({
-          format: fixFormat,
-          webContext,
-          history: historyForSoldier,
-          userRequest,
         });
 
         const newGiao = await giaoFormat({
@@ -345,7 +595,8 @@ async function runBossPipeline({
           conversationId,
           bossSessionId,
           format: fixFormat,
-          tokens: countTokens(userRequest) +
+          tokens:
+            countTokens(userRequest) +
             countMessagesTokens(
               historyForSoldier.map((m) => ({
                 role: m.role,
@@ -353,8 +604,10 @@ async function runBossPipeline({
               }))
             ),
         });
+
         if (newGiao.ok) {
           currentGiao = newGiao;
+          format = fixFormat;
         }
 
         continue;
@@ -368,27 +621,19 @@ async function runBossPipeline({
   }
 
   // Nhận kết quả lính
-  const received = await nhanKetQuaLinh({
+  await nhanKetQuaLinh({
     userId,
     conversationId,
     taskId: currentGiao.taskId,
   });
 
-  const danhGia = await danhGiaKetQua({
-    analysis: analysis.analysis,
-    mergedText: received.merged || soldierOutput,
-    failures: received.failures,
-  });
-
-  // ============================================================
-  // BƯỚC 6: NẾU CODE → BOSS TEST SANDBOX
-  // ============================================================
+  // ===== SANDBOX NẾU LÀ CODE =====
   let sandboxMeta = null;
   let codeMeta = null;
   let resumeAvailable = false;
   let sandboxStatus = "not_run";
 
-  if (danhGia.needSandbox && initialCode) {
+  if (needCode && initialCode) {
     const loop = await vongLapSua({
       userId,
       conversationId,
@@ -429,54 +674,29 @@ async function runBossPipeline({
     soldierOutput = loop.finalCode || initialCode;
   }
 
-  // ============================================================
-  // BƯỚC 7: BOSS TRẢ KẾT QUẢ CHO USER
-  // ============================================================
-  // BOSS đọc kết quả lính → viết câu trả lời cuối cho User.
-  const finalText = await writeFinalAnswer({
-    userId,
-    conversationId,
-    boss: bossPick.boss,
-    candidates: bossPick.candidates,
-    userRequest,
-    analysis: analysis.analysis,
+  return {
+    ok: true,
     soldierOutput,
-    isCode: analysis.analysis.needCode,
+    isCode: needCode,
     language,
     sandboxStatus,
     resumeAvailable,
-    webContext,
-    history: historyForBossCtx,
-    signal,
-  });
-
-  return {
-    ok: true,
-    text: finalText,
-    meta: {
-      analysis: analysis.analysis,
-      sandbox: sandboxMeta,
-      code: codeMeta,
-      web: webContext ? { used: true } : null,
-      boss: bossRes.boss || bossPick.boss,
-      soldier: linh.soldier || currentGiao.soldier,
-      resumeAvailable,
-      soldierAttempts: attempt,
-    },
+    sandboxMeta,
+    codeMeta,
+    soldier: linh.soldier || currentGiao.soldier,
+    attempts: attempt,
   };
 }
 
 // ============================================================
-// BOSS VIẾT CÂU TRẢ LỜI CUỐI CHO USER
+// BOSS VIẾT CÂU TRẢ LỜI CUỐI
 // ============================================================
 
-async function writeFinalAnswer({
+async function bossFinalAnswer({
   userId,
   conversationId,
-  boss,
-  candidates,
+  bossPick,
   userRequest,
-  analysis,
   soldierOutput,
   isCode,
   language,
@@ -486,7 +706,6 @@ async function writeFinalAnswer({
   history = [],
   signal,
 }) {
-  // ===== Xây dựng messages =====
   const messages = [
     {
       role: "system",
@@ -498,11 +717,10 @@ async function writeFinalAnswer({
         "1. Trả lời User bằng tiếng Việt, tự nhiên, thân thiện.\n" +
         "2. KHÔNG nhắc đến 'lính', 'Tiểu Não', 'format', 'Sandbox'.\n" +
         "3. KHÔNG dùng LaTeX hay $$.\n" +
-        "4. Nếu kết quả lính là CODE:\n" +
-        "   - Nếu Sandbox PASS: trình bày code trong ```<lang>...``` đầy đủ.\n" +
-        "   - Nếu Sandbox FAIL: thông báo User chưa qua kiểm thử, gợi ý 'Sửa tiếp'.\n" +
-        "5. Nếu kết quả lính là VĂN BẢN: trình bày văn bản hoàn chỉnh.\n" +
-        "6. Không tự bịa thêm thông tin ngoài kết quả lính.",
+        "4. Nếu kết quả là CODE và Sandbox PASS → trình bày code trong ```<lang>...``` đầy đủ.\n" +
+        "5. Nếu Sandbox FAIL → thông báo User chưa qua kiểm thử, gợi ý 'Sửa tiếp'.\n" +
+        "6. Nếu kết quả là VĂN BẢN → trình bày văn bản hoàn chỉnh.\n" +
+        "7. Không tự bịa thêm thông tin ngoài kết quả lính.",
     },
   ];
 
@@ -531,7 +749,7 @@ async function writeFinalAnswer({
   }
 
   if (webContext) {
-    lines.push("", "DỮ LIỆU WEB BOSS ĐÃ TRA:", webContext);
+    lines.push("", "DỮ LIỆU WEB:", webContext);
   }
 
   if (resumeAvailable) {
@@ -548,12 +766,11 @@ async function writeFinalAnswer({
 
   messages.push({ role: "user", content: lines.join("\n") });
 
-  // ===== Gọi BOSS =====
   const res = await goiBoss({
     userId,
     conversationId,
-    boss,
-    candidates,
+    boss: bossPick.boss,
+    candidates: bossPick.candidates,
     messages,
     temperature: 0.5,
     maxTokens: 8192,
@@ -564,7 +781,7 @@ async function writeFinalAnswer({
     return res.text;
   }
 
-  // ===== Fallback: BOSS không viết được → dùng output lính =====
+  // Fallback
   await logWarn("BOSS không viết được câu trả lời cuối — dùng output lính", {
     userId,
     conversationId,
@@ -592,11 +809,8 @@ function formatFinalFallback({
 }) {
   if (!soldierOutput) return "(Không có kết quả)";
 
-  if (!isCode) {
-    return soldierOutput;
-  }
+  if (!isCode) return soldierOutput;
 
-  // Code
   if (sandboxStatus === "passed") {
     return `✅ Code đã vượt qua kiểm thử Sandbox.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\``;
   }
@@ -609,332 +823,25 @@ function formatFinalFallback({
 }
 
 // ============================================================
-// CHUNKED PIPELINE — giữ nguyên (đã đúng 7 bước)
+// MESSAGES CHO LÍNH — LÍNH LÀM VIỆC THEO FORMAT
 // ============================================================
 
-async function runChunkedPipeline({
-  userId,
-  conversationId,
-  userRequest,
-  userLabel,
-  analysis,
-  historyForBoss,
-  historyForSoldier,
-  signal,
-}) {
-  const chunks = chunkText(userRequest);
-
-  await logInfo("BOSS: chạy pipeline CHUNKED", {
-    userId,
-    conversationId,
-    chunkCount: chunks.length,
-  });
-
-  const outputs = [];
-  const codeChunks = [];
-  let lastLanguage = "html";
-  let lastBossSessionId = null;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkReq = `[PHẦN ${i + 1}/${chunks.length}]\n${chunks[i]}`;
-
-    const requestTokens = countTokens(chunkReq);
-    const soldierHistoryTokens = countMessagesTokens(
-      historyForSoldier.map((m) => ({ role: m.role, content: m.text }))
-    );
-    const soldierTokens = requestTokens + soldierHistoryTokens;
-
-    const bossPick = await chonBossTheoYeuCau({ userId });
-    if (!bossPick.ok) continue;
-
-    const formatRes = await vietFormat({
-      userId,
-      conversationId,
-      userRequest: chunkReq,
-      analysis,
-      webContext: "",
-      history: i === 0 ? historyForBoss : [],
-    });
-    if (!formatRes.ok) continue;
-
-    const giao = await giaoFormat({
-      userId,
-      conversationId,
-      bossSessionId: null,
-      format: formatRes.format,
-      tokens: soldierTokens,
-    });
-    if (!giao.ok) continue;
-
-    const soldierMessages = buildSoldierMessages({
-      format: formatRes.format,
-      webContext: "",
-      history: historyForSoldier,
-      userRequest: chunkReq,
-    });
-
-    const linh = await goiLinh({
-      userId,
-      taskId: giao.taskId,
-      soldier: giao.soldier,
-      candidates: giao.candidates,
-      messages: soldierMessages,
-      payload: formatRes.format,
-      temperature: 0.3,
-      maxTokens: 8192,
-      signal,
-      taskType: giao.taskType,
-    });
-
-    if (!linh.ok) continue;
-
-    const partOutput = linh.text || "";
-
-    if (analysis.needCode) {
-      const validation = validateCodeOutput(partOutput);
-
-      if (!validation.ok) {
-        outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
-        continue;
-      }
-
-      const lang = validation.language;
-      const code = validation.code;
-      lastLanguage = lang;
-      codeChunks.push(code);
-
-      const loop = await vongLapSua({
-        userId,
-        conversationId,
-        bossSessionId: null,
-        language: lang,
-        initialCode: code,
-        goal: chunkReq,
-        signal,
-      });
-
-      if (loop.ok) {
-        outputs.push(`[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``);
-      } else {
-        outputs.push(
-          `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
-        );
-      }
-    } else {
-      outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
-    }
-  }
-
-  let finalText = outputs.join("\n\n");
-  let sandboxMeta = null;
-  let codeMeta = null;
-  let resumeAvailable = false;
-
-  if (analysis.needCode && codeChunks.length > 0) {
-    const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
-
-    const finalLoop = await vongLapSua({
-      userId,
-      conversationId,
-      bossSessionId: lastBossSessionId,
-      language: lastLanguage,
-      initialCode: mergedCode,
-      goal: userRequest,
-      signal,
-    });
-
-    sandboxMeta = finalLoop.lastRun
-      ? {
-          status: finalLoop.lastRun.status,
-          runId: finalLoop.lastRun.runId,
-          attempts: finalLoop.attempts,
-          finalMerge: true,
-        }
-      : null;
-
-    try {
-      const saved = await saveArtifact({
-        userId,
-        conversationId,
-        language: lastLanguage,
-        code: finalLoop.finalCode || mergedCode,
-        version: (finalLoop.version || 1) + 1,
-      });
-      codeMeta = {
-        language: lastLanguage,
-        version: saved.version,
-        artifactId: String(saved._id),
-      };
-    } catch {
-      /* bỏ qua */
-    }
-
-    if (finalLoop.ok) {
-      finalText = `✅ Code đã vượt qua kiểm thử Sandbox cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\``;
-    } else {
-      finalText = `⚠ Code ghép chưa vượt qua kiểm thử cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
-      resumeAvailable = true;
-    }
-  }
-
-  return {
-    ok: true,
-    text: finalText,
-    meta: {
-      analysis,
-      sandbox: sandboxMeta,
-      code: codeMeta,
-      chunked: true,
-      chunkCount: chunks.length,
-      resumeAvailable,
-    },
-  };
-}
-
-function mergeCodeChunks(codeChunks, language) {
-  if (!Array.isArray(codeChunks) || codeChunks.length === 0) return "";
-
-  if (language === "html") {
-    let bodyContent = "";
-    let headContent = "";
-
-    for (const chunk of codeChunks) {
-      const headMatch = chunk.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
-      if (headMatch) headContent += "\n" + headMatch[1];
-
-      const bodyMatch = chunk.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-      if (bodyMatch) {
-        bodyContent += "\n" + bodyMatch[1];
-      } else {
-        bodyContent += "\n" + chunk;
-      }
-    }
-
-    return `<!DOCTYPE html>
-<html lang="vi">
-<head>
-${headContent}
-</head>
-<body>
-${bodyContent}
-</body>
-</html>`;
-  }
-
-  return codeChunks.join("\n\n");
-}
-
-// ============================================================
-// RESUME
-// ============================================================
-
-async function runBossResume({ userId, conversationId, signal }) {
-  await logInfo("BOSS: BẮT ĐẦU RESUME", { userId, conversationId });
-
-  const workState = await loadWorkState(userId, conversationId);
-  const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
-
-  const latest = await getLatestCodeArtifact(conversationId);
-  if (!latest || !latest.code) {
-    return {
-      ok: false,
-      error: "Không tìm thấy code để sửa tiếp. Vui lòng tạo code mới.",
-    };
-  }
-
-  const language = latest.language || "javascript";
-  const currentCode = latest.code;
-
-  const bossPick = await chonBossTheoYeuCau({ userId });
-  if (!bossPick.ok) return { ok: false, error: bossPick.error };
-
-  const loop = await vongLapSua({
-    userId,
-    conversationId,
-    bossSessionId: null,
-    language,
-    initialCode: currentCode,
-    goal,
-    signal,
-  });
-
-  let codeMeta = null;
-  try {
-    const saved = await saveArtifact({
-      userId,
-      conversationId,
-      language,
-      code: loop.finalCode || currentCode,
-      version: (latest.version || 1) + 1,
-    });
-    codeMeta = {
-      language,
-      version: saved.version,
-      artifactId: String(saved._id),
-    };
-  } catch {
-    /* bỏ qua */
-  }
-
-  const sandboxMeta = loop.lastRun
-    ? {
-        status: loop.lastRun.status,
-        runId: loop.lastRun.runId,
-        attempts: loop.attempts,
-      }
-    : null;
-
-  // BOSS viết câu trả lời cuối
-  const finalText = await writeFinalAnswer({
-    userId,
-    conversationId,
-    boss: bossPick.boss,
-    candidates: bossPick.candidates,
-    userRequest: goal,
-    analysis: { needCode: true, taskType: "fix" },
-    soldierOutput: loop.finalCode || currentCode,
-    isCode: true,
-    language,
-    sandboxStatus: loop.ok ? "passed" : "failed",
-    resumeAvailable: !loop.ok,
-    webContext: "",
-    history: [],
-    signal,
-  });
-
-  return {
-    ok: true,
-    text: finalText,
-    meta: {
-      sandbox: sandboxMeta,
-      code: codeMeta,
-      boss: bossPick.boss,
-      resume: true,
-      resumeAvailable: !loop.ok,
-    },
-  };
-}
-
-// ============================================================
-// MESSAGES CHO LÍNH — LÍNH LÀM VIỆC, TRẢ CHO BOSS
-// ============================================================
-
-function buildSoldierMessages({ format, webContext, history = [], userRequest }) {
+function buildSoldierMessages({ format, history = [], userRequest, webContext }) {
   const messages = [
     {
       role: "system",
       content:
         "Bạn là lính — model AI được BOSS giao việc.\n" +
-        "Nhiệm vụ: LÀM VIỆC mà BOSS giao, sau đó TRẢ KẾT QUẢ cho BOSS.\n" +
+        "Nhiệm vụ: LÀM VIỆC theo format, TRẢ KẾT QUẢ cho BOSS.\n" +
         "\n" +
         "QUY TẮC:\n" +
-        "1. Nhận format từ BOSS — đọc kỹ nhiệm vụ.\n" +
-        "2. Làm việc: viết code / viết văn / phân tích... theo yêu cầu.\n" +
-        "3. TRẢ KẾT QUẢ cho BOSS — không tự nhận mình là trợ lý.\n" +
-        "4. Nếu yêu cầu 'tạo app/web/tool' → PHẢI trả code HTML đầy đủ, chạy được.\n" +
+        "1. Nhận format — đọc kỹ nhiệm vụ.\n" +
+        "2. Làm việc: viết code / viết văn / phân tích theo yêu cầu.\n" +
+        "3. TRẢ KẾT QUẢ cho BOSS — không tự nhận là trợ lý.\n" +
+        "4. Nếu yêu cầu tạo app/web → PHẢI trả code HTML đầy đủ, chạy được.\n" +
         "5. KHÔNG trả shell/git commands.\n" +
         "6. KHÔNG dùng LaTeX hay $$.\n" +
-        "7. Nếu là code → đặt trong ```<lang>...```.",
+        "7. Nếu code → đặt trong ```<lang>...```.",
     },
   ];
 
@@ -955,6 +862,11 @@ function buildSoldierMessages({ format, webContext, history = [], userRequest })
     "",
     `Loại nhiệm vụ: ${format.taskType}`,
   ];
+
+  if (format.requirements?.length) {
+    lines.push("", "Yêu cầu cụ thể:");
+    for (const r of format.requirements) lines.push(`- ${r}`);
+  }
 
   if (format.constraints?.length) {
     lines.push("", "Ràng buộc:");
@@ -1019,7 +931,8 @@ function validateCodeOutput(text) {
     }
 
     if (block.lang === "python" || block.lang === "py") {
-      if (isRealPython(body)) return { ok: true, code: body, language: "python" };
+      if (isRealPython(body))
+        return { ok: true, code: body, language: "python" };
       continue;
     }
   }
@@ -1028,11 +941,11 @@ function validateCodeOutput(text) {
     return {
       ok: false,
       reason:
-        "Lính trả về shell/git commands — cần trả về code chạy được (HTML/JS/Python)",
+        "Lính trả shell/git commands — cần trả code chạy được (HTML/JS/Python)",
     };
   }
 
-  return { ok: false, reason: "Code block không hợp lệ hoặc không chạy được" };
+  return { ok: false, reason: "Code block không hợp lệ" };
 }
 
 function isShellScript(body) {
@@ -1105,29 +1018,322 @@ function buildWrongTypeFixFormat({
 
 Lý do sai: ${reason}
 
-Yêu cầu GỐC của User:
+Yêu cầu GỐC:
 ${originalFormat.goal}
 
-QUY TẮC BẮT BUỘC:
-- Trả về CODE HTML/JS/PYTHON CHẠY ĐƯỢC — không phải shell script.
-- KHÔNG trả về lệnh git, npm, cd, mkdir, hay hướng dẫn cài đặt.
-- Code HTML phải có <!DOCTYPE html>, <html>, <head>, <body> đầy đủ.`,
+QUY TẮC:
+- Trả về CODE HTML/JS/PYTHON CHẠY ĐƯỢC — không shell script.
+- KHÔNG trả git, npm, cd, mkdir.
+- HTML phải có <!DOCTYPE html>, <html>, <head>, <body> đầy đủ.`,
     input: "",
     constraints: [
       "Ngôn ngữ: HTML hoặc JavaScript hoặc Python",
-      "KHÔNG dùng shell commands (git, npm, cd...)",
-      "Code phải CHẠY ĐƯỢC",
+      "KHÔNG shell commands",
+      "Code CHẠY ĐƯỢC",
     ],
-    expectedOutput: "Code HTML/JS/Python hoàn chỉnh, chạy được ngay.",
+    expectedOutput: "Code HTML/JS/Python hoàn chỉnh, chạy được.",
     context: {
       attempt,
       reason,
       badOutputPreview: String(badOutput || "").slice(0, 300),
       isWrongType: true,
     },
+    requirements: [],
     subtasks: [],
     risks: [],
     qualityCriteria: [],
+  };
+}
+
+// ============================================================
+// CHUNKED DELEGATE
+// ============================================================
+
+async function runChunkedDelegate({
+  userId,
+  conversationId,
+  userRequest,
+  bossPick,
+  bossSessionId,
+  historyForBoss,
+  historyForSoldier,
+  signal,
+}) {
+  const chunks = chunkText(userRequest);
+
+  await logInfo("BOSS: chạy pipeline CHUNKED", {
+    userId,
+    conversationId,
+    chunkCount: chunks.length,
+  });
+
+  const outputs = [];
+  const codeChunks = [];
+  let lastLanguage = "html";
+  let lastGiao = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkReq = `[PHẦN ${i + 1}/${chunks.length}]\n${chunks[i]}`;
+
+    // BOSS viết format cho phần này
+    const format = {
+      taskType: "code",
+      goal: `Hoàn thành phần ${i + 1}/${chunks.length} của yêu cầu: ${chunks[i].slice(0, 200)}`,
+      needCode: true,
+      requirements: [],
+      constraints: [],
+      expectedOutput: "",
+      subtasks: [],
+      risks: [],
+      qualityCriteria: [],
+    };
+
+    const giao = await giaoFormat({
+      userId,
+      conversationId,
+      bossSessionId,
+      format,
+      tokens: countTokens(chunkReq),
+    });
+    if (!giao.ok) continue;
+    lastGiao = giao;
+
+    const soldierMessages = buildSoldierMessages({
+      format,
+      history: historyForSoldier,
+      userRequest: chunkReq,
+      webContext: "",
+    });
+
+    const linh = await goiLinh({
+      userId,
+      taskId: giao.taskId,
+      soldier: giao.soldier,
+      candidates: giao.candidates,
+      messages: soldierMessages,
+      payload: format,
+      temperature: 0.3,
+      maxTokens: 8192,
+      signal,
+      taskType: giao.taskType,
+    });
+
+    if (!linh.ok) continue;
+
+    const partOutput = linh.text || "";
+    const validation = validateCodeOutput(partOutput);
+
+    if (!validation.ok) {
+      outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
+      continue;
+    }
+
+    const lang = validation.language;
+    const code = validation.code;
+    lastLanguage = lang;
+    codeChunks.push(code);
+
+    const loop = await vongLapSua({
+      userId,
+      conversationId,
+      bossSessionId,
+      language: lang,
+      initialCode: code,
+      goal: chunkReq,
+      signal,
+    });
+
+    if (loop.ok) {
+      outputs.push(`[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``);
+    } else {
+      outputs.push(
+        `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
+      );
+    }
+  }
+
+  let finalText = outputs.join("\n\n");
+  let sandboxMeta = null;
+  let codeMeta = null;
+  let resumeAvailable = false;
+
+  if (codeChunks.length > 0) {
+    const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
+
+    const finalLoop = await vongLapSua({
+      userId,
+      conversationId,
+      bossSessionId,
+      language: lastLanguage,
+      initialCode: mergedCode,
+      goal: userRequest,
+      signal,
+    });
+
+    sandboxMeta = finalLoop.lastRun
+      ? {
+          status: finalLoop.lastRun.status,
+          runId: finalLoop.lastRun.runId,
+          attempts: finalLoop.attempts,
+          finalMerge: true,
+        }
+      : null;
+
+    try {
+      const saved = await saveArtifact({
+        userId,
+        conversationId,
+        language: lastLanguage,
+        code: finalLoop.finalCode || mergedCode,
+        version: (finalLoop.version || 1) + 1,
+      });
+      codeMeta = {
+        language: lastLanguage,
+        version: saved.version,
+        artifactId: String(saved._id),
+      };
+    } catch {
+      /* bỏ qua */
+    }
+
+    finalText = finalLoop.ok
+      ? `✅ Code đã vượt qua kiểm thử Sandbox cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\``
+      : `⚠ Code ghép chưa qua kiểm thử cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
+    resumeAvailable = !finalLoop.ok;
+  }
+
+  return {
+    ok: true,
+    text: finalText,
+    meta: {
+      action: "delegate-chunked",
+      sandbox: sandboxMeta,
+      code: codeMeta,
+      chunked: true,
+      chunkCount: chunks.length,
+      resumeAvailable,
+    },
+  };
+}
+
+function mergeCodeChunks(codeChunks, language) {
+  if (!Array.isArray(codeChunks) || codeChunks.length === 0) return "";
+
+  if (language === "html") {
+    let bodyContent = "";
+    let headContent = "";
+
+    for (const chunk of codeChunks) {
+      const headMatch = chunk.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+      if (headMatch) headContent += "\n" + headMatch[1];
+
+      const bodyMatch = chunk.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (bodyMatch) {
+        bodyContent += "\n" + bodyMatch[1];
+      } else {
+        bodyContent += "\n" + chunk;
+      }
+    }
+
+    return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+${headContent}
+</head>
+<body>
+${bodyContent}
+</body>
+</html>`;
+  }
+
+  return codeChunks.join("\n\n");
+}
+
+// ============================================================
+// RESUME
+// ============================================================
+
+async function runBossResume({ userId, conversationId, signal }) {
+  await logInfo("BOSS: BẮT ĐẦU RESUME", { userId, conversationId });
+
+  const workState = await loadWorkState(userId, conversationId);
+  const goal = workState?.userRequest || "Sửa code cho tới khi hết lỗi";
+
+  const latest = await getLatestCodeArtifact(conversationId);
+  if (!latest || !latest.code) {
+    return {
+      ok: false,
+      error: "Không tìm thấy code để sửa tiếp.",
+    };
+  }
+
+  const language = latest.language || "javascript";
+  const currentCode = latest.code;
+
+  const bossPick = await chonBossTheoYeuCau({ userId });
+  if (!bossPick.ok) return { ok: false, error: bossPick.error };
+
+  const loop = await vongLapSua({
+    userId,
+    conversationId,
+    bossSessionId: null,
+    language,
+    initialCode: currentCode,
+    goal,
+    signal,
+  });
+
+  let codeMeta = null;
+  try {
+    const saved = await saveArtifact({
+      userId,
+      conversationId,
+      language,
+      code: loop.finalCode || currentCode,
+      version: (latest.version || 1) + 1,
+    });
+    codeMeta = {
+      language,
+      version: saved.version,
+      artifactId: String(saved._id),
+    };
+  } catch {
+    /* bỏ qua */
+  }
+
+  const sandboxMeta = loop.lastRun
+    ? {
+        status: loop.lastRun.status,
+        runId: loop.lastRun.runId,
+        attempts: loop.attempts,
+      }
+    : null;
+
+  const finalText = await bossFinalAnswer({
+    userId,
+    conversationId,
+    bossPick,
+    userRequest: goal,
+    soldierOutput: loop.finalCode || currentCode,
+    isCode: true,
+    language,
+    sandboxStatus: loop.ok ? "passed" : "failed",
+    resumeAvailable: !loop.ok,
+    webContext: "",
+    history: [],
+    signal,
+  });
+
+  return {
+    ok: true,
+    text: finalText,
+    meta: {
+      sandbox: sandboxMeta,
+      code: codeMeta,
+      boss: bossPick.boss,
+      resume: true,
+      resumeAvailable: !loop.ok,
+    },
   };
 }
 
@@ -1140,9 +1346,7 @@ router.post(
   (req, res, next) => {
     upload.array("attachments", 10)(req, res, (err) => {
       if (err) {
-        logWarn("Multer upload lỗi", {
-          error: err?.message || String(err),
-        });
+        logWarn("Multer upload lỗi", { error: err?.message || String(err) });
         return res.status(400).json({
           ok: false,
           message: err?.message || "Lỗi upload",
