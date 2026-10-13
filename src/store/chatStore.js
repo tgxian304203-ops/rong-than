@@ -1,6 +1,6 @@
 // src/store/chatStore.js
 // Nhiệm vụ: Quản lý hội thoại và tin nhắn.
-// - Có hàm fixContinue() cho nút "Sửa tiếp"
+// Sửa: Khi fetch thất bại/timeout → tải lại từ DB trước khi đánh dấu failed.
 
 import React, {
   createContext,
@@ -131,6 +131,24 @@ export function ChatProvider({ children }) {
           aiMessage: res?.aiMessage,
         };
       } catch (err) {
+        // ============================================================
+        // FALLBACK: THỬ TẢI LẠI TIN NHẮN TỪ DB
+        // ============================================================
+        // Trường hợp fetch bị timeout / network error — có thể backend
+        // ĐÃ xử lý xong và lưu vào DB. Thử đọc lại xem.
+        // ============================================================
+        const reloadOk = await tryReloadFromDb(conversationId, tempUserMsg);
+
+        if (reloadOk) {
+          try {
+            await loadRecentConversations();
+          } catch {
+            /* bỏ qua */
+          }
+          return { ok: true, reloaded: true };
+        }
+
+        // Không reload được → đánh dấu failed
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tempUserMsg.id
@@ -151,6 +169,40 @@ export function ChatProvider({ children }) {
   );
 
   // ============================================================
+  // THỬ RELOAD TỪ DB
+  // ============================================================
+  const tryReloadFromDb = useCallback(
+    async (conversationId, tempUserMsg) => {
+      try {
+        // Chờ 2 giây — cho backend kịp lưu
+        await new Promise((r) => setTimeout(r, 2000));
+
+        const res = await chatApi.getMessages(conversationId);
+        const items = res?.items || [];
+
+        if (items.length === 0) return false;
+
+        // Kiểm tra: có tin AI mới hơn tempUserMsg không
+        const tempTime = new Date(tempUserMsg.createdAt).getTime();
+        const hasNewAi = items.some(
+          (m) =>
+            m.role === "ai" &&
+            new Date(m.createdAt).getTime() >= tempTime - 5000
+        );
+
+        if (!hasNewAi) return false;
+
+        // Có tin AI mới → thay thế toàn bộ messages
+        setMessages(items);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    []
+  );
+
+  // ============================================================
   // SỬA TIẾP (RESUME)
   // ============================================================
   const fixContinue = useCallback(async () => {
@@ -164,7 +216,6 @@ export function ChatProvider({ children }) {
     const controller = new AbortController();
     setAbortController(controller);
 
-    // Hiển thị tin user "[Sửa tiếp]"
     const tempUserMsg = {
       id: `temp-fix-${Date.now()}`,
       role: "user",
@@ -190,6 +241,12 @@ export function ChatProvider({ children }) {
 
       return { ok: true, aiMessage: res?.aiMessage };
     } catch (err) {
+      // Fallback reload
+      const reloadOk = await tryReloadFromDb(activeConversationId, tempUserMsg);
+      if (reloadOk) {
+        return { ok: true, reloaded: true };
+      }
+
       setMessages((prev) =>
         prev.map((m) =>
           m.id === tempUserMsg.id
@@ -204,7 +261,7 @@ export function ChatProvider({ children }) {
       setFixing(false);
       setAbortController(null);
     }
-  }, [activeConversationId]);
+  }, [activeConversationId, tryReloadFromDb]);
 
   // ============================================================
   // HỦY GỬI

@@ -1,6 +1,6 @@
 // src/api/client.js
 // Nhiệm vụ: HTTP client nền.
-// Timeout 180s để đủ cho 3 tầng phân tích + lính + Sandbox.
+// Timeout 600s (10 phút) — đủ cho dò động + Sandbox + chunk.
 
 const BASE_URL =
   (typeof import.meta !== "undefined" &&
@@ -11,9 +11,9 @@ const BASE_URL =
 const USER_ID_STORAGE_KEY = "rong_than_user_id";
 
 // ============================================================
-// TIMEOUT — 180 giây (3 phút)
+// TIMEOUT — 600 giây (10 phút)
 // ============================================================
-const REQUEST_TIMEOUT_MS = 180000;
+const REQUEST_TIMEOUT_MS = 600000;
 
 // ============================================================
 // USER ID
@@ -111,7 +111,7 @@ export async function request(path, options = {}) {
     if (err?.name === "AbortError") {
       if (timeoutCtrl.signal.aborted) {
         throw new ApiError(
-          "Yêu cầu quá thời gian (180 giây). Vui lòng thử lại.",
+          "Yêu cầu quá thời gian (600 giây). Vui lòng thử lại.",
           { code: "TIMEOUT" }
         );
       }
