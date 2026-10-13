@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — điểm vào chính của pipeline.
-// Hỗ trợ: lịch sử 500 tin, phân tích 3 tầng, chunking, Sandbox cuối.
+// Sửa: prompt lính buộc trả code thật. Phát hiện lính trả sai loại.
 
 import express from "express";
 import multer from "multer";
@@ -131,7 +131,6 @@ async function runBossPipeline({
   });
   if (!analysis.ok) return { ok: false, error: analysis.error };
 
-  // ===== CHUNKED PIPELINE =====
   if (analysis.analysis.strategy === "chunk") {
     return await runChunkedPipeline({
       userId,
@@ -144,7 +143,6 @@ async function runBossPipeline({
     });
   }
 
-  // ===== PIPELINE BÌNH THƯỜNG =====
   let webContext = "";
   if (analysis.analysis.needWeb) {
     const web = await traWeb({
@@ -178,12 +176,6 @@ async function runBossPipeline({
   });
 
   if (!bossRes.ok) {
-    await logWarn("BOSS chính thất bại — gọi BOSS mới", {
-      userId,
-      conversationId,
-      error: bossRes.error,
-    });
-
     const handoff = await banGiaoTrangThai({ userId, conversationId });
     const handoffPrompt = handoff.ok ? buildHandoffPrompt(handoff.handoff) : "";
     const messagesWithHandoff = handoffPrompt
@@ -222,33 +214,118 @@ async function runBossPipeline({
   });
   if (!giao.ok) return { ok: false, error: giao.error };
 
-  const soldierMessages = buildSoldierMessages({
+  // ============================================================
+  // GỌI LÍNH — LẶP TỚI KHI ĐÚNG
+  // ============================================================
+  let soldierMessages = buildSoldierMessages({
     userRequest,
     format: formatRes.format,
     webContext,
     history: historyForContext,
   });
 
-  const linh = await goiLinh({
-    userId,
-    taskId: giao.taskId,
-    soldier: giao.soldier,
-    candidates: giao.candidates,
-    messages: soldierMessages,
-    payload: formatRes.format,
-    temperature: 0.3,
-    maxTokens: 8192,
-    signal,
-  });
+  let attempt = 0;
+  const MAX_ATTEMPTS = 3;
+  let linh = null;
+  let finalOutput = "";
+  let language = "html";
+  let initialCode = "";
 
-  if (!linh.ok) {
-    return {
-      ok: false,
-      error: linh.error || "Lính không hoàn thành",
-      errorHistory: linh.errorHistory,
-    };
+  while (attempt < MAX_ATTEMPTS) {
+    attempt += 1;
+
+    await logInfo(`BOSS: gọi lính — lần thử ${attempt}/${MAX_ATTEMPTS}`, {
+      userId,
+      conversationId,
+      needCode: analysis.analysis.needCode,
+    });
+
+    linh = await goiLinh({
+      userId,
+      taskId: giao.taskId,
+      soldier: giao.soldier,
+      candidates: giao.candidates,
+      messages: soldierMessages,
+      payload: formatRes.format,
+      temperature: 0.3,
+      maxTokens: 8192,
+      signal,
+    });
+
+    if (!linh.ok) {
+      await logWarn("BOSS: lính thất bại", {
+        attempt,
+        error: linh.error,
+      });
+      if (attempt >= MAX_ATTEMPTS) {
+        return {
+          ok: false,
+          error: linh.error || "Lính không hoàn thành",
+          errorHistory: linh.errorHistory,
+        };
+      }
+      continue;
+    }
+
+    finalOutput = linh.text || "";
+
+    // ============================================================
+    // PHÁT HIỆN LÍNH TRẢ SAI LOẠI (KHI CẦN CODE)
+    // ============================================================
+    if (analysis.analysis.needCode) {
+      const validation = validateCodeOutput(finalOutput);
+
+      if (!validation.ok) {
+        await logWarn(
+          `BOSS: lính trả sai loại — yêu cầu làm lại (lần ${attempt})`,
+          {
+            reason: validation.reason,
+            preview: finalOutput.slice(0, 200),
+          }
+        );
+
+        // BOSS viết format sửa
+        const fixFormat = buildWrongTypeFixFormat({
+          originalFormat: formatRes.format,
+          reason: validation.reason,
+          badOutput: finalOutput,
+          attempt,
+        });
+
+        // Gọi lính mới với format sửa
+        soldierMessages = buildSoldierMessages({
+          userRequest,
+          format: fixFormat,
+          webContext,
+          history: historyForContext,
+        });
+
+        // Reset linh để lần sau gọi mới
+        const newGiao = await giaoFormat({
+          userId,
+          conversationId,
+          bossSessionId,
+          format: fixFormat,
+        });
+        if (newGiao.ok) {
+          giao = newGiao;
+        }
+
+        continue;
+      }
+
+      // Code hợp lệ
+      language = validation.language || "html";
+      initialCode = validation.code || "";
+    } else {
+      // Không phải code → chấp nhận
+      break;
+    }
   }
 
+  // ============================================================
+  // SAU KHI LÍNH TRẢ ĐÚNG — SANDBOX
+  // ============================================================
   const received = await nhanKetQuaLinh({
     userId,
     conversationId,
@@ -258,66 +335,61 @@ async function runBossPipeline({
 
   const danhGia = await danhGiaKetQua({
     analysis: analysis.analysis,
-    mergedText: received.merged || linh.text,
+    mergedText: received.merged || finalOutput,
     failures: received.failures,
   });
 
-  let finalText = linh.text || received.merged || "";
+  let finalText = finalOutput || received.merged || "";
   let sandboxMeta = null;
   let codeMeta = null;
   let resumeAvailable = false;
 
-  if (danhGia.needSandbox) {
-    const language = guessLanguage(finalText);
-    const initialCode = extractCodeBlock(finalText, language);
+  if (danhGia.needSandbox && initialCode) {
+    const loop = await vongLapSua({
+      userId,
+      conversationId,
+      bossSessionId,
+      language,
+      initialCode,
+      goal: userRequest,
+      signal,
+    });
 
-    if (initialCode) {
-      const loop = await vongLapSua({
+    sandboxMeta = loop.lastRun
+      ? {
+          status: loop.lastRun.status,
+          runId: loop.lastRun.runId,
+          attempts: loop.attempts,
+        }
+      : null;
+
+    try {
+      const saved = await saveArtifact({
         userId,
         conversationId,
-        bossSessionId,
         language,
-        initialCode,
-        goal: userRequest,
-        signal,
+        code: loop.finalCode || initialCode,
+        version: (loop.version || 1) + 1,
       });
+      codeMeta = {
+        language,
+        version: saved.version,
+        artifactId: String(saved._id),
+      };
+    } catch {
+      /* bỏ qua */
+    }
 
-      sandboxMeta = loop.lastRun
-        ? {
-            status: loop.lastRun.status,
-            runId: loop.lastRun.runId,
-            attempts: loop.attempts,
-          }
-        : null;
-
-      try {
-        const saved = await saveArtifact({
-          userId,
-          conversationId,
-          language,
-          code: loop.finalCode || initialCode,
-          version: (loop.version || 1) + 1,
-        });
-        codeMeta = {
-          language,
-          version: saved.version,
-          artifactId: String(saved._id),
-        };
-      } catch {
-        /* bỏ qua */
-      }
-
-      if (loop.ok) {
-        finalText = `✅ Code đã vượt qua kiểm thử Sandbox (v${
-          loop.version || 1
-        }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
-        resumeAvailable = false;
-      } else {
-        finalText = `⚠ Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
-          loop.lastRun?.stderr || "(không rõ)"
-        }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
-        resumeAvailable = true;
-      }
+    if (loop.ok) {
+      finalText = `✅ Code đã vượt qua kiểm thử Sandbox (v${
+        loop.version || 1
+      }, ${loop.attempts} lần thử).\n\n\`\`\`${language}\n${loop.finalCode}\n\`\`\``;
+      resumeAvailable = false;
+    } else {
+      finalText = `⚠ Chưa vượt qua kiểm thử sau ${loop.attempts} lần thử.\n\nLỗi cuối:\n${
+        loop.lastRun?.stderr || "(không rõ)"
+      }\n\nCode hiện tại:\n\`\`\`${language}\n${loop.finalCode}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục sửa từ code này.`;
+      resumeAvailable = true;
     }
   }
 
@@ -325,38 +397,222 @@ async function runBossPipeline({
     ok: true,
     text: finalText,
     meta: {
-      analysis: {
-        taskType: analysis.analysis.taskType,
-        goal: analysis.analysis.goal,
-        requirements: analysis.analysis.requirements,
-        constraints: analysis.analysis.constraints,
-        expectedOutput: analysis.analysis.expectedOutput,
-        length: analysis.analysis.length,
-        tone: analysis.analysis.tone,
-        targetAudience: analysis.analysis.targetAudience,
-        subtasks: analysis.analysis.subtasks,
-        risks: analysis.analysis.risks,
-        qualityCriteria: analysis.analysis.qualityCriteria,
-        matchesUserIntent: analysis.analysis.matchesUserIntent,
-        missingRequirements: analysis.analysis.missingRequirements,
-        suggestions: analysis.analysis.suggestions,
-        needWeb: analysis.analysis.needWeb,
-        needCode: analysis.analysis.needCode,
-        isRedo: analysis.analysis.isRedo,
-        inheritedTaskType: analysis.analysis.inheritedTaskType,
-      },
+      analysis: analysis.analysis,
       sandbox: sandboxMeta,
       code: codeMeta,
       web: webContext ? { used: true } : null,
       boss: bossRes.boss || bossPick.boss,
       soldier: linh.soldier || giao.soldier,
       resumeAvailable,
+      soldierAttempts: attempt,
     },
   };
 }
 
 // ============================================================
-// PIPELINE CHUNKED
+// VALIDATE CODE OUTPUT — PHÁT HIỆN SAI LOẠI
+// ============================================================
+
+/**
+ * Kiểm tra lính có trả về code hợp lệ không.
+ * @param {string} text
+ * @returns {{ok: boolean, code?: string, language?: string, reason?: string}}
+ */
+function validateCodeOutput(text) {
+  if (!text || typeof text !== "string") {
+    return { ok: false, reason: "Không có nội dung" };
+  }
+
+  // Tìm code block
+  const codeBlocks = [];
+  const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    codeBlocks.push({
+      lang: (match[1] || "").toLowerCase().trim(),
+      body: match[2] || "",
+    });
+  }
+
+  if (codeBlocks.length === 0) {
+    return { ok: false, reason: "Không có code block ```...```" };
+  }
+
+  // Duyệt tìm block hợp lệ
+  for (const block of codeBlocks) {
+    const body = block.body.trim();
+
+    // 1. Phát hiện shell/git commands → sai
+    if (isShellScript(body)) {
+      continue;
+    }
+
+    // 2. Nếu block ghi html → kiểm tra có HTML thật
+    if (block.lang === "html" || block.lang === "htm") {
+      if (isRealHtml(body)) {
+        return { ok: true, code: body, language: "html" };
+      }
+      continue;
+    }
+
+    // 3. Block JS thật
+    if (block.lang === "javascript" || block.lang === "js") {
+      if (isRealJavaScript(body)) {
+        return { ok: true, code: body, language: "javascript" };
+      }
+      continue;
+    }
+
+    // 4. Python thật
+    if (block.lang === "python" || block.lang === "py") {
+      if (isRealPython(body)) {
+        return { ok: true, code: body, language: "python" };
+      }
+      continue;
+    }
+  }
+
+  // Không có block nào hợp lệ
+  const firstLang = codeBlocks[0]?.lang || "không rõ";
+  if (codeBlocks.some((b) => isShellScript(b.body))) {
+    return {
+      ok: false,
+      reason:
+        "Lính trả về shell/git commands — cần trả về code chạy được (HTML/JS/Python)",
+    };
+  }
+
+  return {
+    ok: false,
+    reason: `Code block ngôn ngữ "${firstLang}" không hợp lệ hoặc không chạy được`,
+  };
+}
+
+/**
+ * Kiểm tra đoạn text có phải shell/git commands không.
+ */
+function isShellScript(body) {
+  const s = body.toLowerCase();
+
+  // Đặc trưng shell/git
+  const shellPatterns = [
+    /^\s*git\s+(init|add|commit|push|pull|clone|remote|checkout|branch|merge|status|log)/m,
+    /^\s*npm\s+(install|run|start|init|build|test)/m,
+    /^\s*yarn\s+(install|add|run|start)/m,
+    /^\s*cd\s+[a-zA-Z]/m,
+    /^\s*mkdir\s+/m,
+    /^\s*rm\s+-rf/m,
+    /^\s*touch\s+/m,
+    /^\s*chmod\s+/m,
+    /^\s*chown\s+/m,
+    /^\s*export\s+[A-Z_]+=/m,
+    /^\s*sudo\s+/m,
+    /^\s*apt-get\s+/m,
+    /^\s*brew\s+install/m,
+    /^\s*pip\s+install/m,
+    /^\s*python\s+-m/m,
+    /^\s*node\s+[a-zA-Z]/m,
+    /^\s*curl\s+-/m,
+    /^\s*wget\s+/m,
+    /^\s*docker\s+/m,
+  ];
+
+  let shellMatches = 0;
+  for (const p of shellPatterns) {
+    if (p.test(s)) shellMatches++;
+  }
+
+  // Nếu có >= 2 dòng shell → là shell script
+  if (shellMatches >= 2) return true;
+
+  // Nếu > 50% dòng bắt đầu bằng shell command
+  const lines = body.split("\n").filter((l) => l.trim());
+  if (lines.length < 3) return false;
+
+  const shellLineCount = lines.filter((l) =>
+    /^\s*(git|npm|yarn|cd|mkdir|rm|touch|chmod|chown|export|sudo|apt-get|brew|pip|python|node|curl|wget|docker|echo)\s/.test(
+      l
+    )
+  ).length;
+
+  return shellLineCount / lines.length > 0.5;
+}
+
+function isRealHtml(body) {
+  const s = body.toLowerCase();
+  // Phải có ít nhất 2 thẻ HTML đặc trưng
+  let count = 0;
+  if (/<html[\s>]/i.test(body)) count++;
+  if (/<head[\s>]/i.test(body)) count++;
+  if (/<body[\s>]/i.test(body)) count++;
+  if (/<div[\s>]/i.test(body)) count++;
+  if (/<p[\s>]/i.test(body)) count++;
+  if (/<script[\s>]/i.test(body)) count++;
+  if (/<h[1-6][\s>]/i.test(body)) count++;
+  if (/<button[\s>]/i.test(body)) count++;
+  if (/<input[\s>]/i.test(body)) count++;
+
+  return count >= 2;
+}
+
+function isRealJavaScript(body) {
+  // Ít nhất 1 trong các từ khóa JS
+  return /(function\s+|const\s+|let\s+|var\s+|=>|class\s+|import\s+|export\s+)/i.test(
+    body
+  );
+}
+
+function isRealPython(body) {
+  return /(def\s+|class\s+|import\s+|from\s+|print\s*\()/i.test(body);
+}
+
+// ============================================================
+// FORMAT SỬA KHI LÍNH TRẢ SAI LOẠI
+// ============================================================
+
+function buildWrongTypeFixFormat({
+  originalFormat,
+  reason,
+  badOutput,
+  attempt,
+}) {
+  return {
+    taskType: originalFormat.taskType,
+    goal: `LẦN TRƯỚC BẠN ĐÃ TRẢ SAI LOẠI. Hãy trả lại cho đúng.
+
+Lý do sai: ${reason}
+
+Yêu cầu GỐC của User:
+${originalFormat.goal}
+
+QUY TẮC BẮT BUỘC:
+- Trả về CODE HTML/JS/PYTHON CHẠY ĐƯỢC — không phải shell script.
+- KHÔNG trả về lệnh git, npm, cd, mkdir, hay hướng dẫn cài đặt.
+- Code HTML phải có <!DOCTYPE html>, <html>, <head>, <body> đầy đủ.
+- Code phải chạy được NGAY khi mở file index.html trong trình duyệt.
+- KHÔNG mô tả — trả về code thật.`,
+    input: "",
+    constraints: [
+      "Ngôn ngữ: HTML hoặc JavaScript hoặc Python",
+      "KHÔNG dùng shell commands (git, npm, cd...)",
+      "Code phải CHẠY ĐƯỢC",
+    ],
+    expectedOutput:
+      "Code HTML/JS/Python hoàn chỉnh, chạy được ngay, không phải shell script.",
+    context: {
+      attempt,
+      reason,
+      badOutputPreview: String(badOutput || "").slice(0, 300),
+      isWrongType: true,
+    },
+    subtasks: [],
+    risks: [],
+    qualityCriteria: [],
+  };
+}
+
+// ============================================================
+// PIPELINE CHUNKED — GIỮ NGUYÊN
 // ============================================================
 
 async function runChunkedPipeline({
@@ -383,12 +639,6 @@ async function runChunkedPipeline({
 
   for (let i = 0; i < chunks.length; i++) {
     const chunkReq = `[PHẦN ${i + 1}/${chunks.length}]\n${chunks[i]}`;
-
-    await logInfo(`BOSS: xử lý phần ${i + 1}/${chunks.length}`, {
-      userId,
-      conversationId,
-      chunkLength: chunks[i].length,
-    });
 
     const bossPick = await chonBossTheoYeuCau({ userId });
     if (!bossPick.ok) continue;
@@ -457,34 +707,36 @@ async function runChunkedPipeline({
     const partOutput = linh.text || "";
 
     if (analysis.needCode) {
-      const lang = guessLanguage(partOutput);
-      const code = extractCodeBlock(partOutput, lang);
+      const validation = validateCodeOutput(partOutput);
 
-      if (code) {
-        lastLanguage = lang;
-        codeChunks.push(code);
-
-        const loop = await vongLapSua({
-          userId,
-          conversationId,
-          bossSessionId,
-          language: lang,
-          initialCode: code,
-          goal: chunkReq,
-          signal,
-        });
-
-        if (loop.ok) {
-          outputs.push(
-            `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``
-          );
-        } else {
-          outputs.push(
-            `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
-          );
-        }
-      } else {
+      if (!validation.ok) {
         outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
+        continue;
+      }
+
+      const lang = validation.language;
+      const code = validation.code;
+      lastLanguage = lang;
+      codeChunks.push(code);
+
+      const loop = await vongLapSua({
+        userId,
+        conversationId,
+        bossSessionId,
+        language: lang,
+        initialCode: code,
+        goal: chunkReq,
+        signal,
+      });
+
+      if (loop.ok) {
+        outputs.push(
+          `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``
+        );
+      } else {
+        outputs.push(
+          `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
+        );
       }
     } else {
       outputs.push(`[Phần ${i + 1}]\n${partOutput}`);
@@ -496,14 +748,7 @@ async function runChunkedPipeline({
   let codeMeta = null;
   let resumeAvailable = false;
 
-  // ===== SANDBOX CUỐI TRÊN CODE GHÉP =====
   if (analysis.needCode && codeChunks.length > 0) {
-    await logInfo("BOSS: chạy Sandbox CUỐI trên code ghép", {
-      userId,
-      conversationId,
-      chunkCount: codeChunks.length,
-    });
-
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
 
     const finalLoop = await vongLapSua({
@@ -568,10 +813,6 @@ async function runChunkedPipeline({
     },
   };
 }
-
-// ============================================================
-// GHÉP CODE CHUNKS
-// ============================================================
 
 function mergeCodeChunks(codeChunks, language) {
   if (!Array.isArray(codeChunks) || codeChunks.length === 0) return "";
@@ -734,9 +975,6 @@ function buildBossPlanMessages({ userRequest, analysis, webContext, history = []
   if (analysis.constraints?.length) {
     lines.push(`- constraints: ${analysis.constraints.join("; ")}`);
   }
-  if (analysis.length) lines.push(`- length: ${analysis.length}`);
-  if (analysis.tone) lines.push(`- tone: ${analysis.tone}`);
-  if (analysis.isRedo) lines.push(`- Đây là yêu cầu CHỈNH SỬA LẠI`);
 
   if (webContext) {
     lines.push("", "Dữ liệu Web:", webContext);
@@ -755,13 +993,15 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
       role: "system",
       content:
         "Bạn là trợ lý AI thông minh. Trả lời TRỰC TIẾP cho người dùng bằng tiếng Việt.\n" +
-        "QUAN TRỌNG:\n" +
-        "- KHÔNG nhắc đến 'BOSS', 'Tiểu Não', 'lính', 'báo cáo', 'thị phi'.\n" +
-        "- KHÔNG dùng cụm 'Rõ thưa BOSS', 'Báo cáo BOSS', 'Xin chờ thị phi'.\n" +
-        "- Trả lời tự nhiên, thân thiện, như đang trò chuyện với người dùng.\n" +
-        "- Không dùng LaTeX hay ký hiệu $$.\n" +
-        "- Nếu User yêu cầu 'X chữ', phải đảm bảo đủ X chữ. Đếm trước khi trả lời.\n" +
-        "- Nếu là code HTML/CSS/JS, trả về code chạy được, không mô tả.",
+        "QUY TẮC BẮT BUỘC:\n" +
+        "1. KHÔNG nhắc đến 'BOSS', 'Tiểu Não', 'lính', 'báo cáo'.\n" +
+        "2. KHÔNG dùng LaTeX hay ký hiệu $$.\n" +
+        "3. Nếu User yêu cầu 'tạo app/web/tool/website' → PHẢI trả về FILE HTML đầy đủ, chạy được.\n" +
+        "4. KHÔNG trả về lệnh git, npm, cd, mkdir hay hướng dẫn cài đặt.\n" +
+        "5. KHÔNG mô tả — trả về CODE THẬT trong ```html...```.\n" +
+        "6. Code HTML phải có <!DOCTYPE html>, <html>, <head>, <body> đầy đủ.\n" +
+        "7. Code phải chạy được NGAY khi mở file index.html trong trình duyệt.\n" +
+        "8. Nếu User yêu cầu 'X chữ', phải đảm bảo đủ X chữ. Đếm trước khi trả.",
     },
   ];
 
@@ -804,103 +1044,12 @@ function buildSoldierMessages({ userRequest, format, webContext, history = [] })
   lines.push(
     "",
     "Trả lời trực tiếp cho User bằng tiếng Việt.",
-    "Nếu là code, đặt trong ```<lang>...```.",
-    "Nếu User nói 'làm lại', 'chưa đủ', 'sửa lại' → tiếp tục cải thiện nội dung trước đó."
+    "Nếu là code → đặt trong ```html...``` — CODE CHẠY ĐƯỢC, không phải shell script."
   );
 
   messages.push({ role: "user", content: lines.join("\n") });
 
   return messages;
-}
-
-// ============================================================
-// ĐOÁN NGÔN NGỮ + EXTRACT CODE
-// ============================================================
-
-function guessLanguage(text) {
-  if (typeof text !== "string") return "html";
-
-  const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
-  let match;
-  let best = "html";
-  let bestScore = -1;
-
-  while ((match = re.exec(text)) !== null) {
-    const lang = (match[1] || "").toLowerCase().trim();
-    const body = match[2] || "";
-    let score = 0;
-
-    if (lang === "html" || lang === "htm") score += 100;
-    else if (lang === "javascript" || lang === "js") score += 80;
-    else if (lang === "python" || lang === "py") score += 80;
-    else if (lang === "typescript" || lang === "ts") score += 60;
-    else if (lang === "css") score += 40;
-    else if (lang) score += 10;
-
-    if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
-    if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
-    if (/def\s|import\s|class\s/i.test(body)) score += 100;
-    if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
-
-    if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
-    if (
-      /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&
-      !/<html/i.test(body)
-    )
-      score -= 200;
-
-    if (score > bestScore) {
-      bestScore = score;
-      if (lang === "html" || lang === "htm") best = "html";
-      else if (lang === "javascript" || lang === "js") best = "javascript";
-      else if (lang === "python" || lang === "py") best = "python";
-      else if (lang === "typescript" || lang === "ts") best = "typescript";
-      else if (lang === "css") best = "css";
-      else best = "html";
-    }
-  }
-
-  return best;
-}
-
-function extractCodeBlock(text, language = "") {
-  if (typeof text !== "string") return "";
-
-  const re = /```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/g;
-  let match;
-  let best = "";
-  let bestScore = -1;
-
-  while ((match = re.exec(text)) !== null) {
-    const lang = (match[1] || "").toLowerCase().trim();
-    const body = match[2] || "";
-    let score = 0;
-
-    if (language && lang.includes(language)) score += 100;
-
-    if (lang === "html" || lang === "htm") score += 50;
-    if (lang === "javascript" || lang === "js") score += 40;
-    if (lang === "python" || lang === "py") score += 40;
-
-    if (/<html|<head|<body|<div|<script/i.test(body)) score += 200;
-    if (/function\s|const\s|let\s|var\s|=>/i.test(body)) score += 100;
-    if (/def\s|import\s|class\s/i.test(body)) score += 100;
-    if (/[{}#]\s*\{|@media|\.class/i.test(body)) score += 50;
-
-    if (/^[\s├└│─]+/m.test(body) || /^\s*\w+\/\s*$/m.test(body)) score -= 300;
-    if (
-      /index\.html|product\.html|cart\.html|checkout\.html/i.test(body) &&
-      !/<html/i.test(body)
-    )
-      score -= 200;
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = body;
-    }
-  }
-
-  return best.trim();
 }
 
 // ============================================================
@@ -1074,11 +1223,6 @@ router.post("/fix-continue", async (req, res) => {
         .status(400)
         .json({ ok: false, message: "Thiếu conversationId" });
     }
-
-    await logInfo("Rồng Thần: nhận yêu cầu SỬA TIẾP", {
-      userId,
-      conversationId,
-    });
 
     try {
       await gwNhanYeuCau({
