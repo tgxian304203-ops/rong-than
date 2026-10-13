@@ -1,15 +1,15 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — BOSS nói chuyện trực tiếp với User.
+// Nhiệm vụ: API chat — BOSS như ChatGPT.
 //
 // KIẾN TRÚC:
 //   1. Rồng Thần chuyển tin User → BOSS (trực tiếp)
-//   2. BOSS đọc tin + quyết định:
-//      - "reply"    → BOSS tự trả lời (chat, hỏi đáp)
-//      - "delegate" → BOSS viết format ra lệnh cho lính
-//      - "web"      → BOSS tự tra web
-//   3. Nếu delegate → Tiểu Não gọi lính → lính làm → trả BOSS
-//   4. Nếu code → BOSS test Sandbox → PASS/FAIL
-//   5. BOSS trả kết quả cho User
+//   2. BOSS đọc tin + lịch sử → trả về:
+//      - TEXT tự nhiên → nói chuyện, hỏi lại
+//      - JSON gọi tool: search_web hoặc delegate_soldier
+//   3. Code parse output của BOSS:
+//      - TEXT → gửi thẳng User
+//      - search_web → gọi web → đưa kết quả lại cho BOSS → BOSS trả User
+//      - delegate_soldier → gọi lính → Sandbox nếu code → BOSS trả User
 
 import express from "express";
 import multer from "multer";
@@ -42,7 +42,6 @@ import { nhanYeuCau as bossNhanYeuCau } from "../boss/nhan-yeu-cau.js";
 import { traWeb, formatWebResults } from "../boss/tra-web.js";
 import { giaoFormat } from "../boss/giao-format.js";
 import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
-import { danhGiaKetQua } from "../boss/danh-gia-ket-qua.js";
 import { vongLapSua } from "../boss/vong-lap-sua.js";
 
 import { chonBossTheoYeuCau } from "../dai-nao/chon-boss-theo-yeu-cau.js";
@@ -110,7 +109,7 @@ async function loadConversationHistory(conversationId, limit) {
 }
 
 // ============================================================
-// PIPELINE BOSS
+// PIPELINE BOSS — NHƯ CHATGPT
 // ============================================================
 
 async function runBossPipeline({
@@ -143,8 +142,8 @@ async function runBossPipeline({
   const bossPick = await chonBossTheoYeuCau({ userId });
   if (!bossPick.ok) return { ok: false, error: bossPick.error };
 
-  // ===== BƯỚC 3: BOSS ĐỌC TIN USER + QUYẾT ĐỊNH =====
-  const decisionMessages = buildBossDecisionMessages({
+  // ===== BƯỚC 3: BOSS ĐỌC TIN + QUYẾT ĐỊNH =====
+  const bossMessages = buildBossMessages({
     userRequest,
     history: historyForBossCtx,
   });
@@ -154,9 +153,9 @@ async function runBossPipeline({
     conversationId,
     boss: bossPick.boss,
     candidates: bossPick.candidates,
-    messages: decisionMessages,
-    temperature: 0.4,
-    maxTokens: 4096,
+    messages: bossMessages,
+    temperature: 0.5,
+    maxTokens: 8192,
     signal,
   });
 
@@ -164,16 +163,16 @@ async function runBossPipeline({
     const handoff = await banGiaoTrangThai({ userId, conversationId });
     const handoffPrompt = handoff.ok ? buildHandoffPrompt(handoff.handoff) : "";
     const messagesWithHandoff = handoffPrompt
-      ? [...decisionMessages, { role: "system", content: handoffPrompt }]
-      : decisionMessages;
+      ? [...bossMessages, { role: "system", content: handoffPrompt }]
+      : bossMessages;
 
     bossRes = await goiBossMoi({
       userId,
       conversationId,
       oldSession: null,
       messages: messagesWithHandoff,
-      temperature: 0.4,
-      maxTokens: 4096,
+      temperature: 0.5,
+      maxTokens: 8192,
       signal,
     });
   }
@@ -186,30 +185,25 @@ async function runBossPipeline({
   }
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
+  const bossOutput = bossRes.text;
 
-  // ===== BƯỚC 4: PARSE JSON QUYẾT ĐỊNH =====
-  const decision = parseBossDecision(bossRes.text);
+  // ===== BƯỚC 4: PARSE OUTPUT CỦA BOSS =====
+  const parsed = parseBossOutput(bossOutput);
 
   await logInfo("BOSS: quyết định xử lý", {
     userId,
     conversationId,
-    action: decision.action,
-    hasFormat: !!decision.format,
+    type: parsed.type,
+    tool: parsed.tool || null,
   });
 
   // ============================================================
-  // TRƯỜNG HỢP 1: BOSS TỰ TRẢ LỜI
+  // TRƯỜNG HỢP 1: BOSS TRẢ TEXT → gửi thẳng User
   // ============================================================
-  if (decision.action === "reply") {
-    await logInfo("BOSS: tự trả lời User", {
-      userId,
-      conversationId,
-      replyLength: String(decision.replyText || "").length,
-    });
-
+  if (parsed.type === "text") {
     return {
       ok: true,
-      text: decision.replyText || "(BOSS không có nội dung)",
+      text: parsed.text,
       meta: {
         action: "reply",
         boss: bossRes.boss || bossPick.boss,
@@ -218,26 +212,28 @@ async function runBossPipeline({
   }
 
   // ============================================================
-  // TRƯỜNG HỢP 2: BOSS TRA WEB
+  // TRƯỜNG HỢP 2: BOSS GỌI search_web
   // ============================================================
-  if (decision.action === "web") {
-    await logInfo("BOSS: tự tra web", {
+  if (parsed.type === "tool" && parsed.tool === "search_web") {
+    const query = parsed.args?.query || userRequest;
+
+    await logInfo("BOSS: gọi search_web", {
       userId,
       conversationId,
-      query: decision.webQuery,
+      query,
     });
 
     const web = await traWeb({
       userId,
       conversationId,
-      query: decision.webQuery || userRequest,
+      query,
       signal,
     });
 
     const webContext = web.ok ? formatWebResults(web.results) : "";
 
     // BOSS đọc kết quả web → trả lời User
-    const finalMessages = buildBossReadWebMessages({
+    const finalMessages = buildBossAfterWebMessages({
       userRequest,
       webContext,
       history: historyForBossCtx,
@@ -250,7 +246,7 @@ async function runBossPipeline({
       candidates: bossPick.candidates,
       messages: finalMessages,
       temperature: 0.5,
-      maxTokens: 4096,
+      maxTokens: 8192,
       signal,
     });
 
@@ -258,7 +254,7 @@ async function runBossPipeline({
       ok: true,
       text: finalRes.ok
         ? finalRes.text
-        : `Không tra được web. Lỗi: ${web.error || "không rõ"}`,
+        : `Không tra được web. ${web.error || ""}`,
       meta: {
         action: "web",
         boss: bossRes.boss || bossPick.boss,
@@ -268,17 +264,22 @@ async function runBossPipeline({
   }
 
   // ============================================================
-  // TRƯỜNG HỢP 3: BOSS GIAO LÍNH
+  // TRƯỜNG HỢP 3: BOSS GỌI delegate_soldier
   // ============================================================
-  if (decision.action === "delegate") {
-    if (!decision.format) {
-      return { ok: false, error: "BOSS delegate nhưng thiếu format" };
-    }
+  if (parsed.type === "tool" && parsed.tool === "delegate_soldier") {
+    const args = parsed.args || {};
+    const taskType = args.taskType || "bulk";
+    const goal = args.goal || userRequest;
+    const isCode =
+      taskType === "code" ||
+      taskType === "fix-code" ||
+      args.needCode === true;
 
-    await logInfo("BOSS: giao format cho lính", {
+    await logInfo("BOSS: gọi delegate_soldier", {
       userId,
       conversationId,
-      taskType: decision.format.taskType,
+      taskType,
+      goal: goal.slice(0, 100),
     });
 
     // ===== CHUNK NẾU YÊU CẦU DÀI =====
@@ -296,19 +297,29 @@ async function runBossPipeline({
       });
     }
 
-    // ===== GỌI LÍNH =====
+    // ===== CHẠY LÍNH =====
+    const format = {
+      taskType,
+      goal,
+      requirements: args.requirements || [],
+      constraints: args.constraints || [],
+      expectedOutput: args.expectedOutput || "",
+      needCode: isCode,
+      subtasks: [],
+      risks: [],
+      qualityCriteria: [],
+    };
+
     const result = await runSoldierWork({
       userId,
       conversationId,
       userRequest,
       bossPick,
       bossSessionId,
-      format: decision.format,
+      format,
       historyForBoss: historyForBossCtx,
       historyForSoldier,
-      needCode: decision.format.taskType === "code" ||
-        decision.format.taskType === "fix-code" ||
-        decision.format.needCode === true,
+      needCode: isCode,
       signal,
     });
 
@@ -345,64 +356,68 @@ async function runBossPipeline({
     };
   }
 
-  // ===== Không rõ action =====
+  // ============================================================
+  // FALLBACK: output lạ → coi như text
+  // ============================================================
   return {
     ok: true,
-    text: decision.replyText || "(BOSS không xác định được yêu cầu)",
-    meta: { action: "unknown" },
+    text: parsed.text || bossOutput,
+    meta: { action: "reply-fallback" },
   };
 }
 
 // ============================================================
-// PROMPT: BOSS QUYẾT ĐỊNH
+// PROMPT BOSS — NHƯ CHATGPT
 // ============================================================
 
-function buildBossDecisionMessages({ userRequest, history = [] }) {
+function buildBossMessages({ userRequest, history = [] }) {
   const messages = [
     {
       role: "system",
       content:
-        "Bạn là BOSS của Rồng Thần — model AI tiếp quản cuộc trò chuyện với User.\n" +
+        "Bạn là Rồng Thần — trợ lý AI thông minh, hoạt động như ChatGPT.\n" +
         "\n" +
-        "NHIỆM VỤ:\n" +
-        "1. Đọc tin User.\n" +
-        "2. Quyết định xử lý:\n" +
-        "   - action='reply'    → tự trả lời (chào hỏi, hỏi đáp, tâm sự...)\n" +
-        "   - action='web'      → cần tra web → trả query\n" +
-        "   - action='delegate' → cần lính làm (viết code, viết văn, phân tích...)\n" +
+        "BẠN CÓ THỂ:\n" +
+        "1. TRÒ CHUYỆN tự nhiên với User (chào hỏi, hỏi đáp, tư vấn).\n" +
+        "2. HỎI LẠI khi yêu cầu chưa rõ — để hiểu User cần gì.\n" +
+        "3. GỌI CÔNG CỤ khi cần:\n" +
+        "   - search_web: tra cứu thông tin mới trên internet.\n" +
+        "   - delegate_soldier: giao việc cho model khác (viết code, viết văn dài, phân tích lớn).\n" +
         "\n" +
-        "QUY TẮC BẮT BUỘC:\n" +
-        "- Chào hỏi, hỏi thăm, hỏi đáp đơn giản, tâm sự → action='reply'.\n" +
-        "- Cần thông tin mới/thời sự → action='web'.\n" +
-        "- Yêu cầu viết code/văn/phân tích → action='delegate'.\n" +
+        "CÁCH TRẢ LỜI:\n" +
         "\n" +
-        "TRẢ VỀ DUY NHẤT 1 JSON — không thêm gì khác:\n" +
+        "【Nếu chỉ TRÒ CHUYỆN / HỎI LẠI / TRẢ LỜI ĐƠN GIẢN】\n" +
+        "→ Trả về TEXT tự nhiên (tiếng Việt), không cần JSON.\n" +
+        "Ví dụ: \"Xin chào! Tôi có thể giúp gì cho bạn?\"\n" +
+        "Ví dụ: \"Để tôi làm rõ: bạn muốn web bán gì? Bao nhiêu trang?\"\n" +
         "\n" +
-        "Nếu action='reply':\n" +
-        '{\n  "action": "reply",\n  "replyText": "câu trả lời của bạn cho User"\n}\n' +
+        "【Nếu cần TRA WEB】\n" +
+        "→ Trả về DUY NHẤT 1 JSON:\n" +
+        "{\"tool\": \"search_web\", \"args\": {\"query\": \"câu query\"}}\n" +
         "\n" +
-        "Nếu action='web':\n" +
-        '{\n  "action": "web",\n  "webQuery": "câu query tra web"\n}\n' +
+        "【Nếu cần GIAO VIỆC CHO MODEL KHÁC】\n" +
+        "→ Trả về DUY NHẤT 1 JSON:\n" +
+        "{\n" +
+        "  \"tool\": \"delegate_soldier\",\n" +
+        "  \"args\": {\n" +
+        "    \"taskType\": \"code|bulk|fix-code|summary|research|analysis|read-long-doc\",\n" +
+        "    \"goal\": \"mô tả nhiệm vụ cụ thể cho model khác\",\n" +
+        "    \"requirements\": [\"yêu cầu cụ thể\"],\n" +
+        "    \"constraints\": [\"ràng buộc\"],\n" +
+        "    \"expectedOutput\": \"kết quả mong đợi\",\n" +
+        "    \"needCode\": true/false\n" +
+        "  }\n" +
+        "}\n" +
         "\n" +
-        "Nếu action='delegate':\n" +
-        '{\n' +
-        '  "action": "delegate",\n' +
-        '  "format": {\n' +
-        '    "taskType": "code|bulk|fix-code|summary|research|analysis|read-long-doc",\n' +
-        '    "goal": "mô tả nhiệm vụ cho lính",\n' +
-        '    "requirements": ["yêu cầu cụ thể"],\n' +
-        '    "constraints": ["ràng buộc"],\n' +
-        '    "expectedOutput": "kết quả mong đợi",\n' +
-        '    "needCode": true/false\n' +
-        '  }\n' +
-        '}\n' +
+        "QUY TẮC:\n" +
+        "- Chào hỏi, hỏi thăm → TEXT.\n" +
+        "- Yêu cầu mơ hồ → HỎI LẠI bằng TEXT.\n" +
+        "- Cần thông tin mới → search_web.\n" +
+        "- Cần viết code/văn dài → delegate_soldier.\n" +
+        "- Có từ 'tạo' → taskType='code'.\n" +
+        "- Có từ 'viết' → taskType='bulk'.\n" +
         "\n" +
-        "QUY TẮC PHÂN LOẠI taskType:\n" +
-        "- Có từ 'tạo' → taskType = 'code' (viết web, app...)\n" +
-        "- Có từ 'viết' → taskType = 'bulk' (viết văn, bài luận...)\n" +
-        "- 'sửa code' → 'fix-code'.\n" +
-        "\n" +
-        "KHÔNG dùng LaTeX hay $$. Không thêm chữ nào ngoài JSON.",
+        "KHÔNG dùng LaTeX hay $$. KHÔNG giải thích thêm ngoài JSON khi gọi tool.",
     },
   ];
 
@@ -420,46 +435,17 @@ function buildBossDecisionMessages({ userRequest, history = [] }) {
 }
 
 // ============================================================
-// PARSE JSON QUYẾT ĐỊNH
+// BOSS SAU KHI TRA WEB
 // ============================================================
 
-function parseBossDecision(text) {
-  if (!text || typeof text !== "string") {
-    return { action: "reply", replyText: "(Không có nội dung)" };
-  }
-
-  // Bỏ ```json ... ``` nếu có
-  let s = text.trim();
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
-
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    // Không phải JSON — coi như reply text
-    return { action: "reply", replyText: text };
-  }
-
-  try {
-    const obj = JSON.parse(s.slice(start, end + 1));
-    if (!obj.action) obj.action = "reply";
-    return obj;
-  } catch {
-    return { action: "reply", replyText: text };
-  }
-}
-
-// ============================================================
-// BOSS ĐỌC KẾT QUẢ WEB
-// ============================================================
-
-function buildBossReadWebMessages({ userRequest, webContext, history = [] }) {
+function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
   const messages = [
     {
       role: "system",
       content:
-        "Bạn là BOSS của Rồng Thần. Bạn vừa tra web xong.\n" +
-        "Đọc dữ liệu web và trả lời User trực tiếp bằng tiếng Việt, tự nhiên.\n" +
-        "KHÔNG nhắc đến 'web', 'tra cứu', 'công cụ'.\n" +
+        "Bạn là Rồng Thần. Bạn vừa tra web xong.\n" +
+        "Đọc dữ liệu web → trả lời User tự nhiên bằng tiếng Việt.\n" +
+        "KHÔNG nhắc đến 'công cụ', 'tra web', 'search'.\n" +
         "KHÔNG dùng LaTeX hay $$.\n" +
         "Trích nguồn URL nếu có.",
     },
@@ -490,7 +476,45 @@ function buildBossReadWebMessages({ userRequest, webContext, history = [] }) {
 }
 
 // ============================================================
-// GỌI LÍNH — LÀM VIỆC THEO FORMAT
+// PARSE OUTPUT CỦA BOSS
+// ============================================================
+
+function parseBossOutput(text) {
+  if (!text || typeof text !== "string") {
+    return { type: "text", text: "(Không có nội dung)" };
+  }
+
+  // Bỏ ```json ... ``` nếu có
+  let s = text.trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+
+  // Tìm JSON đầu tiên
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+
+  if (start >= 0 && end > start) {
+    try {
+      const obj = JSON.parse(s.slice(start, end + 1));
+
+      // Có tool → gọi công cụ
+      if (obj.tool) {
+        return {
+          type: "tool",
+          tool: obj.tool,
+          args: obj.args || {},
+        };
+      }
+    } catch {
+      /* không phải JSON → xử lý như text */
+    }
+  }
+
+  // Text tự nhiên
+  return { type: "text", text: s };
+}
+
+// ============================================================
+// GỌI LÍNH
 // ============================================================
 
 async function runSoldierWork({
@@ -505,7 +529,6 @@ async function runSoldierWork({
   needCode,
   signal,
 }) {
-  // Giao format cho Tiểu Não
   const giao = await giaoFormat({
     userId,
     conversationId,
@@ -519,7 +542,6 @@ async function runSoldierWork({
   });
   if (!giao.ok) return { ok: false, error: giao.error };
 
-  // Gọi lính
   let attempt = 0;
   const MAX_ATTEMPTS = 3;
   let linh = null;
@@ -620,14 +642,13 @@ async function runSoldierWork({
     }
   }
 
-  // Nhận kết quả lính
   await nhanKetQuaLinh({
     userId,
     conversationId,
     taskId: currentGiao.taskId,
   });
 
-  // ===== SANDBOX NẾU LÀ CODE =====
+  // ===== SANDBOX =====
   let sandboxMeta = null;
   let codeMeta = null;
   let resumeAvailable = false;
@@ -689,7 +710,7 @@ async function runSoldierWork({
 }
 
 // ============================================================
-// BOSS VIẾT CÂU TRẢ LỜI CUỐI
+// BOSS TRẢ LỜI CUỐI
 // ============================================================
 
 async function bossFinalAnswer({
@@ -710,17 +731,18 @@ async function bossFinalAnswer({
     {
       role: "system",
       content:
-        "Bạn là BOSS của Rồng Thần — người trả lời TRỰC TIẾP cho User.\n" +
-        "Bạn vừa nhận kết quả từ lính (model khác) — hãy đọc và trả lời User.\n" +
+        "Bạn là Rồng Thần — trợ lý AI.\n" +
+        "Bạn vừa nhận kết quả từ model khác (đã làm việc).\n" +
+        "Hãy đọc kết quả → trả lời User tự nhiên, thân thiện.\n" +
         "\n" +
-        "QUY TẮC BẮT BUỘC:\n" +
-        "1. Trả lời User bằng tiếng Việt, tự nhiên, thân thiện.\n" +
-        "2. KHÔNG nhắc đến 'lính', 'Tiểu Não', 'format', 'Sandbox'.\n" +
+        "QUY TẮC:\n" +
+        "1. Tiếng Việt tự nhiên.\n" +
+        "2. KHÔNG nhắc 'model khác', 'lính', 'giao việc', 'Sandbox'.\n" +
         "3. KHÔNG dùng LaTeX hay $$.\n" +
         "4. Nếu kết quả là CODE và Sandbox PASS → trình bày code trong ```<lang>...``` đầy đủ.\n" +
         "5. Nếu Sandbox FAIL → thông báo User chưa qua kiểm thử, gợi ý 'Sửa tiếp'.\n" +
         "6. Nếu kết quả là VĂN BẢN → trình bày văn bản hoàn chỉnh.\n" +
-        "7. Không tự bịa thêm thông tin ngoài kết quả lính.",
+        "7. Không bịa thêm ngoài kết quả.",
     },
   ];
 
@@ -736,16 +758,16 @@ async function bossFinalAnswer({
     "YÊU CẦU CỦA USER:",
     userRequest,
     "",
-    "KẾT QUẢ LÍNH ĐÃ LÀM:",
+    "KẾT QUẢ ĐÃ LÀM:",
     "```",
-    soldierOutput || "(lính không có output)",
+    soldierOutput || "(không có output)",
     "```",
     "",
-    `TRẠNG THÁI SANDBOX: ${sandboxStatus}`,
+    `SANDBOX: ${sandboxStatus}`,
   ];
 
   if (isCode) {
-    lines.push(`NGÔN NGỮ CODE: ${language}`);
+    lines.push(`NGÔN NGỮ: ${language}`);
   }
 
   if (webContext) {
@@ -759,10 +781,7 @@ async function bossFinalAnswer({
     );
   }
 
-  lines.push(
-    "",
-    "Hãy viết câu trả lời HOÀN CHỈNH cho User dựa trên kết quả lính."
-  );
+  lines.push("", "Viết câu trả lời HOÀN CHỈNH cho User.");
 
   messages.push({ role: "user", content: lines.join("\n") });
 
@@ -777,15 +796,7 @@ async function bossFinalAnswer({
     signal,
   });
 
-  if (res.ok && res.text) {
-    return res.text;
-  }
-
-  // Fallback
-  await logWarn("BOSS không viết được câu trả lời cuối — dùng output lính", {
-    userId,
-    conversationId,
-  });
+  if (res.ok && res.text) return res.text;
 
   return formatFinalFallback({
     soldierOutput,
@@ -808,22 +819,21 @@ function formatFinalFallback({
   resumeAvailable,
 }) {
   if (!soldierOutput) return "(Không có kết quả)";
-
   if (!isCode) return soldierOutput;
 
   if (sandboxStatus === "passed") {
-    return `✅ Code đã vượt qua kiểm thử Sandbox.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\``;
+    return `✅ Code đã vượt qua kiểm thử.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\``;
   }
 
   if (resumeAvailable) {
-    return `⚠ Code chưa vượt qua kiểm thử Sandbox.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\`\n\nBấm nút **🔧 Sửa tiếp** để tiếp tục.`;
+    return `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${language}\n${soldierOutput}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
   }
 
   return `\`\`\`${language}\n${soldierOutput}\n\`\`\``;
 }
 
 // ============================================================
-// MESSAGES CHO LÍNH — LÍNH LÀM VIỆC THEO FORMAT
+// MESSAGES CHO LÍNH
 // ============================================================
 
 function buildSoldierMessages({ format, history = [], userRequest, webContext }) {
@@ -831,17 +841,16 @@ function buildSoldierMessages({ format, history = [], userRequest, webContext })
     {
       role: "system",
       content:
-        "Bạn là lính — model AI được BOSS giao việc.\n" +
-        "Nhiệm vụ: LÀM VIỆC theo format, TRẢ KẾT QUẢ cho BOSS.\n" +
+        "Bạn là model được giao việc.\n" +
+        "Nhiệm vụ: LÀM VIỆC theo format, TRẢ KẾT QUẢ.\n" +
         "\n" +
         "QUY TẮC:\n" +
-        "1. Nhận format — đọc kỹ nhiệm vụ.\n" +
-        "2. Làm việc: viết code / viết văn / phân tích theo yêu cầu.\n" +
-        "3. TRẢ KẾT QUẢ cho BOSS — không tự nhận là trợ lý.\n" +
-        "4. Nếu yêu cầu tạo app/web → PHẢI trả code HTML đầy đủ, chạy được.\n" +
-        "5. KHÔNG trả shell/git commands.\n" +
-        "6. KHÔNG dùng LaTeX hay $$.\n" +
-        "7. Nếu code → đặt trong ```<lang>...```.",
+        "1. Đọc kỹ format.\n" +
+        "2. Làm việc: viết code / viết văn / phân tích.\n" +
+        "3. Nếu tạo app/web → PHẢI trả code HTML đầy đủ, chạy được.\n" +
+        "4. KHÔNG trả shell/git commands.\n" +
+        "5. KHÔNG dùng LaTeX hay $$.\n" +
+        "6. Nếu code → đặt trong ```<lang>...```.",
     },
   ];
 
@@ -854,17 +863,17 @@ function buildSoldierMessages({ format, history = [], userRequest, webContext })
   }
 
   const lines = [
-    "YÊU CẦU GỐC CỦA USER:",
+    "YÊU CẦU GỐC:",
     userRequest,
     "",
-    "FORMAT BOSS GIAO:",
+    "FORMAT GIAO VIỆC:",
     format.goal,
     "",
-    `Loại nhiệm vụ: ${format.taskType}`,
+    `Loại: ${format.taskType}`,
   ];
 
   if (format.requirements?.length) {
-    lines.push("", "Yêu cầu cụ thể:");
+    lines.push("", "Yêu cầu:");
     for (const r of format.requirements) lines.push(`- ${r}`);
   }
 
@@ -881,11 +890,7 @@ function buildSoldierMessages({ format, history = [], userRequest, webContext })
     lines.push("", "Dữ liệu tra cứu:", webContext);
   }
 
-  lines.push(
-    "",
-    "Hãy làm việc theo format và TRẢ KẾT QUẢ cho BOSS.",
-    "Nếu là code → đặt trong ```html...``` — CODE CHẠY ĐƯỢC."
-  );
+  lines.push("", "Làm việc theo format. Nếu code → ```html...``` chạy được.");
 
   messages.push({ role: "user", content: lines.join("\n") });
 
@@ -912,7 +917,7 @@ function validateCodeOutput(text) {
   }
 
   if (codeBlocks.length === 0) {
-    return { ok: false, reason: "Không có code block ```...```" };
+    return { ok: false, reason: "Không có code block" };
   }
 
   for (const block of codeBlocks) {
@@ -940,8 +945,7 @@ function validateCodeOutput(text) {
   if (codeBlocks.some((b) => isShellScript(b.body))) {
     return {
       ok: false,
-      reason:
-        "Lính trả shell/git commands — cần trả code chạy được (HTML/JS/Python)",
+      reason: "Trả về shell/git commands — cần code chạy được",
     };
   }
 
@@ -949,7 +953,6 @@ function validateCodeOutput(text) {
 }
 
 function isShellScript(body) {
-  const s = body.toLowerCase();
   const patterns = [
     /^\s*git\s+(init|add|commit|push|pull|clone|remote|checkout|branch|merge|status|log)/m,
     /^\s*npm\s+(install|run|start|init|build|test)/m,
@@ -1014,24 +1017,24 @@ function buildWrongTypeFixFormat({
 }) {
   return {
     taskType: originalFormat.taskType,
-    goal: `LẦN TRƯỚC BẠN ĐÃ TRẢ SAI LOẠI. Hãy trả lại cho đúng.
+    goal: `LẦN TRƯỚC BẠN ĐÃ TRẢ SAI LOẠI. Hãy trả lại.
 
-Lý do sai: ${reason}
+Lý do: ${reason}
 
 Yêu cầu GỐC:
 ${originalFormat.goal}
 
 QUY TẮC:
-- Trả về CODE HTML/JS/PYTHON CHẠY ĐƯỢC — không shell script.
-- KHÔNG trả git, npm, cd, mkdir.
-- HTML phải có <!DOCTYPE html>, <html>, <head>, <body> đầy đủ.`,
+- CODE HTML/JS/PYTHON CHẠY ĐƯỢC — không shell script.
+- KHÔNG git, npm, cd, mkdir.
+- HTML có <!DOCTYPE html>, <html>, <head>, <body>.`,
     input: "",
     constraints: [
-      "Ngôn ngữ: HTML hoặc JavaScript hoặc Python",
+      "Ngôn ngữ: HTML/JavaScript/Python",
       "KHÔNG shell commands",
       "Code CHẠY ĐƯỢC",
     ],
-    expectedOutput: "Code HTML/JS/Python hoàn chỉnh, chạy được.",
+    expectedOutput: "Code hoàn chỉnh, chạy được.",
     context: {
       attempt,
       reason,
@@ -1046,7 +1049,7 @@ QUY TẮC:
 }
 
 // ============================================================
-// CHUNKED DELEGATE
+// CHUNKED
 // ============================================================
 
 async function runChunkedDelegate({
@@ -1070,15 +1073,13 @@ async function runChunkedDelegate({
   const outputs = [];
   const codeChunks = [];
   let lastLanguage = "html";
-  let lastGiao = null;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunkReq = `[PHẦN ${i + 1}/${chunks.length}]\n${chunks[i]}`;
 
-    // BOSS viết format cho phần này
     const format = {
       taskType: "code",
-      goal: `Hoàn thành phần ${i + 1}/${chunks.length} của yêu cầu: ${chunks[i].slice(0, 200)}`,
+      goal: `Hoàn thành phần ${i + 1}/${chunks.length}: ${chunks[i].slice(0, 200)}`,
       needCode: true,
       requirements: [],
       constraints: [],
@@ -1096,7 +1097,6 @@ async function runChunkedDelegate({
       tokens: countTokens(chunkReq),
     });
     if (!giao.ok) continue;
-    lastGiao = giao;
 
     const soldierMessages = buildSoldierMessages({
       format,
@@ -1143,13 +1143,9 @@ async function runChunkedDelegate({
       signal,
     });
 
-    if (loop.ok) {
-      outputs.push(`[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode}\n\`\`\``);
-    } else {
-      outputs.push(
-        `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
-      );
-    }
+    outputs.push(
+      `[Phần ${i + 1}]\n\`\`\`${lang}\n${loop.finalCode || code}\n\`\`\``
+    );
   }
 
   let finalText = outputs.join("\n\n");
@@ -1197,8 +1193,8 @@ async function runChunkedDelegate({
     }
 
     finalText = finalLoop.ok
-      ? `✅ Code đã vượt qua kiểm thử Sandbox cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\``
-      : `⚠ Code ghép chưa qua kiểm thử cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
+      ? `✅ Code đã vượt qua kiểm thử cuối.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\``
+      : `⚠ Code ghép chưa qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${finalLoop.finalCode}\n\`\`\`\n\nBấm **🔧 Sửa tiếp** để tiếp tục.`;
     resumeAvailable = !finalLoop.ok;
   }
 
