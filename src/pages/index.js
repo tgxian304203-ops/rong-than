@@ -1,6 +1,7 @@
 // src/pages/index.js
 // Nhiệm vụ: Màn hình chat chính.
 // Giữ HeaderBar — nhưng HeaderBar không có nền/viền.
+// Có ảnh nền rồng mờ phía sau (bg-dragon-overlay).
 
 import React, { useEffect, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -48,6 +49,7 @@ export default function ChatMain() {
 
   return (
     <div
+      className="bg-dragon-overlay"
       style={{
         display: "flex",
         flexDirection: "column",
