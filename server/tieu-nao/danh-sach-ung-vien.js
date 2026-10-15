@@ -1,7 +1,11 @@
 // server/tieu-nao/danh-sach-ung-vien.js
-// Nhiệm vụ: Danh sách model ứng viên của Tiểu Não.
+// Nhiệm vụ: Danh sách model ứng viên của Tiểu Não (lính).
 // Gồm model ưu tiên + model phụ (dự phòng).
 // Chỉ dò động khi HẾT tất cả model tĩnh + key.
+//
+// QUY TẮC DỰ ÁN:
+//   - Tiểu Não CHỈ dùng key của Tiểu Não (tieuNaoKeys).
+//   - KHÔNG dò/gọi model từ key Đại Não.
 
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
@@ -27,120 +31,39 @@ export const TIEU_NAO_TASK = {
 
 // ============================================================
 // BẢNG ỨNG VIÊN TĨNH
+//   - ỨNG CỬ VIÊN 1 (priority 1-3): gọi trước
+//   - ỨNG CỬ VIÊN 2 (priority 10-21): gọi sau nếu ƯCV1 lỗi/hết quota
 // ============================================================
 
+const UNG_CU_VIEN_1_VA_2 = [
+  // ===== ỨNG CỬ VIÊN 1 =====
+  { name: "gemini-3.8-flash", provider: "gemini", priority: 1 },
+  { name: "thinking-machines/inkling:free", provider: "openrouter", priority: 2 },
+  { name: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", priority: 3 },
+
+  // ===== ỨNG CỬ VIÊN 2 =====
+  { name: "gemini-3.6-flash", provider: "gemini", priority: 10 },
+  { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 11 },
+  { name: "gemini-3.1-flash-lite", provider: "gemini", priority: 12 },
+  { name: "openai/gpt-oss-120b", provider: "groq", priority: 13 },
+  { name: "openai/gpt-oss-20b", provider: "groq", priority: 14 },
+  { name: "openai/gpt-oss-safeguard-20b", provider: "groq", priority: 15 },
+  { name: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", priority: 16 },
+  { name: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", priority: 17 },
+  { name: "thinking-machines/inkling-small:free", provider: "openrouter", priority: 18 },
+  { name: "cohere/north-mini-code:free", provider: "openrouter", priority: 19 },
+  { name: "poolside/laguna-xs-2.1:free", provider: "openrouter", priority: 20 },
+  { name: "liquid/lfm2.5-2.6b:free", provider: "openrouter", priority: 21 },
+];
+
 export const TIEU_NAO_CANDIDATES = {
-  [TIEU_NAO_TASK.WRITE_CODE]: [
-    // Ưu tiên
-    { name: "qwen/qwen3-coder:free", provider: "openrouter", priority: 1 },
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 2 },
-    // Model phụ
-    { name: "openai/gpt-oss-20b", provider: "groq", priority: 10 },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 11 },
-    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 12 },
-    { name: "llama-3.1-8b-instant", provider: "groq", priority: 13 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 21 },
-    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 30 },
-    { name: "openai/gpt-oss-20b:free", provider: "openrouter", priority: 31 },
-    { name: "qwen/qwen3-next-80b-a3b-instruct:free", provider: "openrouter", priority: 32 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 33 },
-    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 34 },
-    { name: "nvidia/nemotron-3-nano-30b-a3b:free", provider: "openrouter", priority: 35 },
-    { name: "arcee-ai/trinity-mini:free", provider: "openrouter", priority: 36 },
-    { name: "stepfun/step-3.5-flash:free", provider: "openrouter", priority: 37 },
-  ],
-
-  [TIEU_NAO_TASK.FIX_CODE]: [
-    // Ưu tiên
-    { name: "qwen/qwen3-coder:free", provider: "openrouter", priority: 1 },
-    {
-      name: "meta-llama/llama-4-maverick-17b-128e-instruct",
-      provider: "groq",
-      priority: 2,
-    },
-    // Model phụ
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 10 },
-    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 12 },
-    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 13 },
-    { name: "llama-3.1-8b-instant", provider: "groq", priority: 14 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 21 },
-    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 30 },
-    { name: "qwen/qwen3-next-80b-a3b-instruct:free", provider: "openrouter", priority: 31 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 32 },
-    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 33 },
-    { name: "arcee-ai/trinity-mini:free", provider: "openrouter", priority: 34 },
-    { name: "stepfun/step-3.5-flash:free", provider: "openrouter", priority: 35 },
-  ],
-
-  [TIEU_NAO_TASK.ANALYZE_CODE]: [
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 1 },
-    {
-      name: "meta-llama/llama-4-maverick-17b-128e-instruct",
-      provider: "groq",
-      priority: 2,
-    },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 10 },
-    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
-    { name: "qwen/qwen3.6-27b", provider: "groq", priority: 12 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 21 },
-    { name: "qwen/qwen3-coder:free", provider: "openrouter", priority: 30 },
-    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 31 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 32 },
-  ],
-
-  [TIEU_NAO_TASK.READ_LONG_DOC]: [
-    { name: "qwen/qwen3.6-plus:free", provider: "openrouter", priority: 1 },
-    { name: "moonshotai/kimi-k2-instruct", provider: "groq", priority: 2 },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 10 },
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 11 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 20 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 21 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 30 },
-    { name: "qwen/qwen3-next-80b-a3b-instruct:free", provider: "openrouter", priority: 31 },
-  ],
-
-  [TIEU_NAO_TASK.SUMMARY]: [
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 1 },
-    { name: "minimax/minimax-m2.5:free", provider: "openrouter", priority: 2 },
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 10 },
-    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
-    { name: "llama-3.1-8b-instant", provider: "groq", priority: 12 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 21 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 30 },
-    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 31 },
-  ],
-
-  [TIEU_NAO_TASK.RESEARCH]: [
-    {
-      name: "meta-llama/llama-4-scout-17b-16e-instruct",
-      provider: "groq",
-      priority: 1,
-    },
-    { name: "minimax/minimax-m2.5:free", provider: "openrouter", priority: 2 },
-    { name: "openai/gpt-oss-120b", provider: "groq", priority: 10 },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 11 },
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 20 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 21 },
-    { name: "openai/gpt-oss-120b:free", provider: "openrouter", priority: 30 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 31 },
-  ],
-
-  [TIEU_NAO_TASK.BULK]: [
-    { name: "gemini-3.5-flash-lite", provider: "gemini", priority: 1 },
-    { name: "llama-3.1-8b-instant", provider: "groq", priority: 2 },
-    { name: "llama-3.3-70b-versatile", provider: "groq", priority: 10 },
-    { name: "openai/gpt-oss-20b", provider: "groq", priority: 11 },
-    { name: "gemini-2.5-flash", provider: "gemini", priority: 20 },
-    { name: "openai/gpt-oss-20b:free", provider: "openrouter", priority: 30 },
-    { name: "meta-llama/llama-3.3-70b-instruct:free", provider: "openrouter", priority: 31 },
-    { name: "z-ai/glm-4.5-air:free", provider: "openrouter", priority: 32 },
-    { name: "stepfun/step-3.5-flash:free", provider: "openrouter", priority: 33 },
-  ],
+  [TIEU_NAO_TASK.WRITE_CODE]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.FIX_CODE]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.ANALYZE_CODE]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.READ_LONG_DOC]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.SUMMARY]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.RESEARCH]: UNG_CU_VIEN_1_VA_2,
+  [TIEU_NAO_TASK.BULK]: UNG_CU_VIEN_1_VA_2,
 };
 
 export function layDanhSachUngVien(taskType) {

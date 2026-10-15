@@ -1,65 +1,35 @@
 // server/dai-nao/bang-xep-hang-model.js
 // Nhiệm vụ: Bảng xếp hạng sức mạnh model cho Đại Não.
 //
-// Cập nhật định kỳ theo PHẦN 06 dự án.
-// Model free thay đổi thường xuyên — bảng này cần rà lại mỗi tháng.
+// Điểm sức mạnh được đánh theo thứ tự ưu tiên:
+//   - ỨNG CỬ VIÊN 1 (priority 1-3) → điểm cao nhất
+//   - ỨNG CỬ VIÊN 2 (priority 10-21) → điểm thấp hơn
+//
+// Model không có trong bảng → trả về điểm mặc định 60.
 
 // ============================================================
-// HẠNG SỨC MẠNH
-// ============================================================
-// 100 = cao nhất. Càng thấp càng yếu.
-
-// ============================================================
-// BẢNG XẾP HẠNG — THEO NHIỆM VỤ
+// ĐIỂM SỨC MẠNH THEO MODEL
 // ============================================================
 
-// Phân loại yêu cầu (classify)
-const CLASSIFY_RANK = {
-  "openai/gpt-oss-120b": 100,
-  "meta-llama/llama-4-maverick-17b-128e-instruct": 90,
-  "llama-3.3-70b-versatile": 85,
-  "openai/gpt-oss-20b": 70,
-  "llama-3.1-8b-instant": 50,
-};
+const RANK = {
+  // ===== ỨNG CỬ VIÊN 1 =====
+  "gemini-3.8-flash": 100,
+  "thinking-machines/inkling:free": 98,
+  "nvidia/nemotron-3-ultra-550b-a55b:free": 96,
 
-// Chọn model theo loại (select-model)
-const SELECT_MODEL_RANK = {
-  "llama-3.3-70b-versatile": 100,
-  "openai/gpt-oss-20b": 80,
-  "openai/gpt-oss-120b": 95,
-  "meta-llama/llama-4-maverick-17b-128e-instruct": 85,
-  "llama-3.1-8b-instant": 50,
-};
-
-// Gọi BOSS (call-boss)
-const CALL_BOSS_RANK = {
-  "openai/gpt-oss-120b": 100,
-  "meta-llama/llama-4-maverick-17b-128e-instruct": 90,
-  "llama-3.3-70b-versatile": 85,
-  "qwen/qwen3-235b-a22b:free": 88,
-  "qwen/qwen3-32b:free": 75,
-  "deepseek/deepseek-v3.2:free": 78,
-  "google/gemini-3.1-flash-lite": 92,
-  "google/gemini-3-flash": 95,
-  "moonshotai/kimi-k2-instruct": 82,
-  "nvidia/nemotron-3-super-120b-a12b:free": 85,
-  "z-ai/glm-4.5-air:free": 78,
-  "openai/gpt-oss-20b": 70,
-  "llama-3.1-8b-instant": 50,
-  "minimax/minimax-m2.5:free": 72,
-  "meta-llama/llama-4-scout-17b-16e-instruct": 68,
-  "google/gemma-3n-e4b-it:free": 60,
-  "google/gemma-3-27b-it:free": 75,
-};
-
-// ============================================================
-// BẢNG THEO TASK
-// ============================================================
-
-const RANK_BY_TASK = {
-  classify: CLASSIFY_RANK,
-  "select-model": SELECT_MODEL_RANK,
-  "call-boss": CALL_BOSS_RANK,
+  // ===== ỨNG CỬ VIÊN 2 =====
+  "gemini-3.6-flash": 92,
+  "gemini-3.5-flash-lite": 90,
+  "gemini-3.1-flash-lite": 88,
+  "openai/gpt-oss-120b": 86,
+  "openai/gpt-oss-20b": 82,
+  "openai/gpt-oss-safeguard-20b": 80,
+  "nvidia/nemotron-3.5-lightning:free": 78,
+  "nvidia/nemotron-3-super-120b-a12b:free": 76,
+  "thinking-machines/inkling-small:free": 74,
+  "cohere/north-mini-code:free": 72,
+  "poolside/laguna-xs-2.1:free": 70,
+  "liquid/lfm2.5-2.6b:free": 68,
 };
 
 // ============================================================
@@ -67,29 +37,19 @@ const RANK_BY_TASK = {
 // ============================================================
 
 /**
- * Lấy điểm sức mạnh của 1 model theo task.
+ * Lấy điểm sức mạnh của 1 model.
  * Model không có trong bảng → trả về điểm mặc định 60.
  *
  * @param {string} modelName
- * @param {string} [taskType]
+ * @param {string} [taskType]  — không dùng, giữ để tương thích
  * @returns {number}
  */
 export function layDiemSucManh(modelName, taskType = null) {
   if (!modelName) return 0;
 
-  // Nếu có taskType → tra bảng của task đó trước
-  if (taskType && RANK_BY_TASK[taskType]) {
-    const rank = RANK_BY_TASK[taskType][modelName];
-    if (typeof rank === "number") return rank;
-  }
+  const rank = RANK[modelName];
+  if (typeof rank === "number") return rank;
 
-  // Không có trong task cụ thể → tra tất cả bảng
-  for (const task of Object.keys(RANK_BY_TASK)) {
-    const rank = RANK_BY_TASK[task][modelName];
-    if (typeof rank === "number") return rank;
-  }
-
-  // Không tìm thấy → mặc định trung bình
   return 60;
 }
 

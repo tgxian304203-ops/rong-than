@@ -1,6 +1,10 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — BOSS như ChatGPT.
 // BOSS hiểu nguyên tắc, tự quyết định. Code → Sandbox → báo PASS/FAIL cho User.
+//
+// QUY TẮC DỰ ÁN (PHẦN 01 mục 10, PHẦN 02 Luồng 3):
+//   - MỌI nhiệm vụ liên quan code/fix/kiểm tra PHẢI qua BOSS test Sandbox.
+//   - Route KHÔNG được gọi thẳng sandbox/chay-kiem-thu.js.
 
 import express from "express";
 import multer from "multer";
@@ -32,12 +36,12 @@ import { nhanYeuCau as bossNhanYeuCau } from "../boss/nhan-yeu-cau.js";
 import { traWeb, formatWebResults } from "../boss/tra-web.js";
 import { giaoFormat } from "../boss/giao-format.js";
 import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
+import { kiemTraSandbox } from "../boss/kiem-tra-sandbox.js";
 
 import { goiBoss } from "../dai-nao/goi-boss.js";
 import { goiBossMoi } from "../dai-nao/goi-boss-moi.js";
 
 import { goiLinh } from "../tieu-nao/goi-linh.js";
-import { chayKiemThu } from "../sandbox/chay-kiem-thu.js";
 import { chunkText } from "../utils/chunker.js";
 import { countTokens, countMessagesTokens } from "../utils/token-counter.js";
 
@@ -468,7 +472,7 @@ function parseBossOutput(text) {
 }
 
 // ============================================================
-// GỌI LÍNH + SANDBOX
+// GỌI LÍNH + SANDBOX (qua BOSS)
 // ============================================================
 
 async function runSoldierWork({
@@ -596,9 +600,9 @@ async function runSoldierWork({
     taskId: currentGiao.taskId,
   });
 
-  // ===== SANDBOX — BẮT BUỘC KHI CÓ CODE =====
+  // ===== SANDBOX — BẮT BUỘC QUA BOSS KHI CÓ CODE =====
   if (initialCode) {
-    await logInfo("BOSS: có code → Sandbox", {
+    await logInfo("BOSS: có code → BOSS test Sandbox", {
       userId,
       conversationId,
       language,
@@ -627,17 +631,21 @@ async function runSoldierWork({
         elapsedMs: Date.now() - startTime,
       });
 
-      const testRes = await chayKiemThu({
+      // ===== BOSS TEST SANDBOX (không gọi thẳng chayKiemThu) =====
+      const testRes = await kiemTraSandbox({
         userId,
         conversationId,
         language,
         code: initialCode,
+        testCode: "",
+        signal,
       });
 
       sandboxStatus = testRes.ok ? "passed" : "failed";
       sandboxMeta = {
         status: testRes.status,
         runId: testRes.runId,
+        version: testRes.version,
         attempts: iteration,
       };
 
@@ -1287,12 +1295,15 @@ async function runChunkedDelegate({
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
 
+    // ===== BOSS TEST SANDBOX (không gọi thẳng chayKiemThu) =====
     try {
-      const testRes = await chayKiemThu({
+      const testRes = await kiemTraSandbox({
         userId,
         conversationId,
         language: lastLanguage,
         code: mergedCode,
+        testCode: "",
+        signal,
       });
       sandboxStatus = testRes.ok ? "passed" : "failed";
 
@@ -1300,6 +1311,7 @@ async function runChunkedDelegate({
         userId,
         conversationId,
         status: testRes.status,
+        version: testRes.version,
       });
     } catch {
       /* bỏ qua */
