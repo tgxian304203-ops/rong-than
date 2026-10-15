@@ -2,8 +2,8 @@
    Nhiệm vụ: Hiệu ứng kính trong suốt cho khung tin nhắn, menu, dialog.
    Quy tắc giao diện dự án:
      - Khung tin nhắn: trong suốt ~50%
-     - Menu chính: trong suốt ~30%
-     - HeaderBar: trong suốt ~30%
+     - Menu chính: trong suốt ~10%
+     - HeaderBar: trong suốt ~10%
 */
 
 /* ===== KHUNG TIN NHẮN GLASS (nền trong suốt ~50%) ===== */
@@ -30,16 +30,16 @@
   color: var(--color-user-text);
 }
 
-/* ===== MENU PHỦ TOÀN MÀN HÌNH GLASS (trong suốt ~30%) ===== */
+/* ===== MENU PHỦ TOÀN MÀN HÌNH GLASS (trong suốt ~10%) ===== */
 .glass-menu {
-  background-color: rgba(10, 10, 10, 0.3);
+  background-color: rgba(10, 10, 10, 0.1);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 
-/* ===== HEADER BAR (trong suốt ~30%) ===== */
+/* ===== HEADER BAR (trong suốt ~10%) ===== */
 .glass-header {
-  background-color: rgba(10, 10, 10, 0.3);
+  background-color: rgba(10, 10, 10, 0.1);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
