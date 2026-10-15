@@ -62,7 +62,6 @@ const HISTORY_FOR_BOSS = 500;
 const HISTORY_FOR_SOLDIER = 400;
 const SANDBOX_TIME_BUDGET_MS = 5 * 60 * 1000;
 
-// Số token tối đa BOSS được trả về (đủ cho code dài)
 const BOSS_MAX_OUTPUT_TOKENS = 32768;
 const BOSS_FIX_MAX_OUTPUT_TOKENS = 8192;
 
@@ -120,30 +119,79 @@ function errString(e) {
 }
 
 // ============================================================
-// FALLBACK: Trích code từ userRequest nếu BOSS trả JSON bị cắt
+// TRÍCH CODE TỪ userRequest (text thuần hoặc code block)
 // ============================================================
 
 /**
- * Nếu BOSS trả về text có chứa "test_sandbox" (JSON bị cắt)
- * → trích code từ userRequest để chạy Sandbox.
+ * Trích code từ tin nhắn user.
+ * Hỗ trợ:
+ *   - Code block ```lang ... ```
+ *   - HTML có DOCTYPE
+ *   - HTML không DOCTYPE
+ *   - JavaScript thuần
+ *   - Python thuần
+ *
+ * @param {string} userRequest
+ * @returns {{language: string, code: string} | null}
  */
+function extractCodeFromRequest(userRequest) {
+  if (!userRequest || typeof userRequest !== "string") return null;
+
+  // Case 1: Code block ```lang ... ```
+  const blockMatch = userRequest.match(/```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/);
+  if (blockMatch) {
+    const lang = (blockMatch[1] || "").toLowerCase().trim() || "html";
+    const code = (blockMatch[2] || "").trim();
+    if (code) return { language: lang, code };
+  }
+
+  // Case 2: HTML có DOCTYPE → <!DOCTYPE ... </html>
+  const htmlDoctype = userRequest.match(/(<!DOCTYPE[\s\S]*<\/html>)/i);
+  if (htmlDoctype) {
+    return { language: "html", code: htmlDoctype[1].trim() };
+  }
+
+  // Case 3: HTML không DOCTYPE → <html ... </html>
+  const htmlNoDoctype = userRequest.match(/(<html[\s\S]*<\/html>)/i);
+  if (htmlNoDoctype) {
+    return { language: "html", code: htmlNoDoctype[1].trim() };
+  }
+
+  // Case 4: JavaScript — bắt đầu bằng function/const/let/class
+  const jsMatch = userRequest.match(
+    /((?:function\s+|const\s+|let\s+|class\s+)[\s\S]+)/i
+  );
+  if (jsMatch) {
+    return { language: "javascript", code: jsMatch[1].trim() };
+  }
+
+  // Case 5: Python — bắt đầu bằng def/class/import
+  const pyMatch = userRequest.match(
+    /((?:def\s+|class\s+|import\s+|from\s+)[\s\S]+)/i
+  );
+  if (pyMatch) {
+    return { language: "python", code: pyMatch[1].trim() };
+  }
+
+  return null;
+}
+
+// ============================================================
+// FALLBACK: Nếu BOSS trả JSON bị cắt
+// ============================================================
+
 function extractTestSandboxFallback(userRequest, parsed) {
   if (parsed?.type !== "text") return null;
   if (typeof parsed?.text !== "string") return null;
   if (!/"tool"\s*:\s*"test_sandbox"/.test(parsed.text)) return null;
 
-  // Trích code block đầu tiên trong userRequest
-  const match = userRequest.match(/```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/);
-  if (!match) return null;
-
-  const lang = (match[1] || "").toLowerCase().trim() || "html";
-  const code = match[2] || "";
-  if (!code.trim()) return null;
+  const extracted = extractCodeFromRequest(userRequest);
+  if (!extracted) return null;
 
   return {
     type: "tool",
     tool: "test_sandbox",
-    args: { language: lang, code },
+    args: { language: extracted.language, code: extracted.code },
   };
 }
 
@@ -227,7 +275,7 @@ async function runBossPipeline({
   let parsed = parseBossOutput(bossRes.text);
 
   // ============================================================
-  // FALLBACK: Nếu BOSS trả JSON bị cắt → tự trích code từ userRequest
+  // FALLBACK: BOSS trả JSON bị cắt → tự trích code từ userRequest
   // ============================================================
   if (parsed.type === "text") {
     const fallback = extractTestSandboxFallback(userRequest, parsed);
@@ -261,8 +309,23 @@ async function runBossPipeline({
   // ===== TEST_SANDBOX (User gửi code để kiểm tra) =====
   if (parsed.type === "tool" && parsed.tool === "test_sandbox") {
     const args = parsed.args || {};
-    const language = args.language || "html";
-    const code = args.code || "";
+    let language = args.language || "html";
+    let code = args.code || "";
+
+    // Nếu BOSS KHÔNG gửi code → tự trích từ userRequest
+    if (!code) {
+      const extracted = extractCodeFromRequest(userRequest);
+      if (extracted) {
+        code = extracted.code;
+        language = extracted.language;
+        await logInfo("BOSS: tự trích code từ userRequest", {
+          userId,
+          conversationId,
+          language,
+          codeLength: code.length,
+        });
+      }
+    }
 
     if (!code) {
       return {
@@ -496,9 +559,11 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "🅰️ TRƯỜNG HỢP 1 — USER GỬI CODE ĐỂ KIỂM TRA:\n" +
         "\n" +
         "Dấu hiệu nhận biết:\n" +
-        "   - User dán code (có ```<lang>...```) hoặc gửi file code.\n" +
         "   - User nói: 'kiểm tra', 'check', 'test', 'có lỗi không',\n" +
         "     'review', 'bug', 'chạy được không', 'sai chỗ nào'.\n" +
+        "   - User có thể gửi code ở CÙNG tin hoặc TIN TIẾP THEO.\n" +
+        "     → Nếu tin trước nói 'kiểm tra code' mà tin này chỉ có code\n" +
+        "       → vẫn coi là User muốn kiểm tra code.\n" +
         "\n" +
         "Cách xử lý:\n" +
         "   BƯỚC 1: Gọi tool 'test_sandbox' để test code TRƯỚC.\n" +
@@ -559,14 +624,15 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "Ví dụ: \"Xin chào! Tôi có thể giúp gì?\"\n" +
         "Ví dụ: \"Để tôi rõ hơn: bạn muốn web bán gì?\"\n" +
         "\n" +
-        "【Test Sandbox code User gửi】→ JSON:\n" +
+        "【Test Sandbox code User gửi】→ JSON (KHÔNG cần gửi code):\n" +
         "{\n" +
         "  \"tool\": \"test_sandbox\",\n" +
         "  \"args\": {\n" +
-        "    \"language\": \"html|javascript|python\",\n" +
-        "    \"code\": \"<toàn bộ code user gửi>\"\n" +
+        "    \"language\": \"html|javascript|python\"\n" +
         "  }\n" +
         "}\n" +
+        "\n" +
+        "→ Hệ thống tự lấy code từ tin nhắn User. BẠN KHÔNG cần gửi code.\n" +
         "\n" +
         "【Tra web】→ JSON:\n" +
         "{\"tool\": \"search_web\", \"args\": {\"query\": \"...\"}}\n" +
