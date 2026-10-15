@@ -62,6 +62,10 @@ const HISTORY_FOR_BOSS = 500;
 const HISTORY_FOR_SOLDIER = 400;
 const SANDBOX_TIME_BUDGET_MS = 5 * 60 * 1000;
 
+// Số token tối đa BOSS được trả về (đủ cho code dài)
+const BOSS_MAX_OUTPUT_TOKENS = 32768;
+const BOSS_FIX_MAX_OUTPUT_TOKENS = 8192;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -103,6 +107,44 @@ async function loadConversationHistory(conversationId, limit) {
   } catch {
     return [];
   }
+}
+
+function errString(e) {
+  if (typeof e === "string") return e;
+  if (e && typeof e.message === "string") return e.message;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+// ============================================================
+// FALLBACK: Trích code từ userRequest nếu BOSS trả JSON bị cắt
+// ============================================================
+
+/**
+ * Nếu BOSS trả về text có chứa "test_sandbox" (JSON bị cắt)
+ * → trích code từ userRequest để chạy Sandbox.
+ */
+function extractTestSandboxFallback(userRequest, parsed) {
+  if (parsed?.type !== "text") return null;
+  if (typeof parsed?.text !== "string") return null;
+  if (!/"tool"\s*:\s*"test_sandbox"/.test(parsed.text)) return null;
+
+  // Trích code block đầu tiên trong userRequest
+  const match = userRequest.match(/```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/);
+  if (!match) return null;
+
+  const lang = (match[1] || "").toLowerCase().trim() || "html";
+  const code = match[2] || "";
+  if (!code.trim()) return null;
+
+  return {
+    type: "tool",
+    tool: "test_sandbox",
+    args: { language: lang, code },
+  };
 }
 
 // ============================================================
@@ -161,7 +203,7 @@ async function runBossPipeline({
     taskType: "call-boss",
     messages: bossMessages,
     temperature: 0.6,
-    maxTokens: 8192,
+    maxTokens: BOSS_MAX_OUTPUT_TOKENS,
     signal,
   });
 
@@ -172,7 +214,7 @@ async function runBossPipeline({
       oldSession: null,
       messages: bossMessages,
       temperature: 0.6,
-      maxTokens: 8192,
+      maxTokens: BOSS_MAX_OUTPUT_TOKENS,
       signal,
     });
   }
@@ -182,7 +224,23 @@ async function runBossPipeline({
   }
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
-  const parsed = parseBossOutput(bossRes.text);
+  let parsed = parseBossOutput(bossRes.text);
+
+  // ============================================================
+  // FALLBACK: Nếu BOSS trả JSON bị cắt → tự trích code từ userRequest
+  // ============================================================
+  if (parsed.type === "text") {
+    const fallback = extractTestSandboxFallback(userRequest, parsed);
+    if (fallback) {
+      await logInfo("BOSS: fallback trích code từ userRequest (JSON bị cắt)", {
+        userId,
+        conversationId,
+        language: fallback.args.language,
+        codeLength: fallback.args.code.length,
+      });
+      parsed = fallback;
+    }
+  }
 
   await logInfo("BOSS: quyết định", {
     userId,
@@ -307,7 +365,7 @@ async function runBossPipeline({
       taskType: "call-boss",
       messages: finalMessages,
       temperature: 0.6,
-      maxTokens: 8192,
+      maxTokens: BOSS_MAX_OUTPUT_TOKENS,
       signal,
     });
 
@@ -402,20 +460,6 @@ async function runBossPipeline({
     text: parsed.text || bossRes.text,
     meta: { action: "reply-fallback" },
   };
-}
-
-// ============================================================
-// HELPER: ép lỗi về string
-// ============================================================
-
-function errString(e) {
-  if (typeof e === "string") return e;
-  if (e && typeof e.message === "string") return e.message;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
-  }
 }
 
 // ============================================================
@@ -836,7 +880,7 @@ async function runSoldierWork({
         taskType: "call-boss",
         messages: bossFixMessages,
         temperature: 0.4,
-        maxTokens: 4096,
+        maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS,
         signal,
       });
 
@@ -1102,7 +1146,7 @@ async function bossFinalAnswer({
     taskType: "call-boss",
     messages,
     temperature: 0.6,
-    maxTokens: 8192,
+    maxTokens: BOSS_MAX_OUTPUT_TOKENS,
     signal,
   });
 
