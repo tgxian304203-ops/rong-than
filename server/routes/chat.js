@@ -6,6 +6,12 @@
 //   - MỌI nhiệm vụ liên quan code/fix/kiểm tra PHẢI qua BOSS test Sandbox.
 //   - Route KHÔNG được gọi thẳng sandbox/chay-kiem-thu.js.
 //   - BOSS viết format sửa dựa trên TOÀN BỘ code (không cắt).
+//
+// LUỒNG 2 TRƯỜNG HỢP:
+//   A. User gửi code để KIỂM TRA:
+//      → BOSS test Sandbox trước → PASS: báo không lỗi → FAIL: báo lỗi + hỏi sửa
+//   B. User yêu cầu LÀM CODE MỚI:
+//      → BOSS giao lính viết → lính trả → BOSS test → trả User
 
 import express from "express";
 import multer from "multer";
@@ -194,6 +200,94 @@ async function runBossPipeline({
     };
   }
 
+  // ===== TEST_SANDBOX (User gửi code để kiểm tra) =====
+  if (parsed.type === "tool" && parsed.tool === "test_sandbox") {
+    const args = parsed.args || {};
+    const language = args.language || "html";
+    const code = args.code || "";
+
+    if (!code) {
+      return {
+        ok: true,
+        text: "Không tìm thấy code để kiểm tra.",
+        meta: { action: "test-sandbox-empty" },
+      };
+    }
+
+    await logInfo("BOSS: test Sandbox code User gửi", {
+      userId,
+      conversationId,
+      language,
+      codeLength: code.length,
+    });
+
+    // BOSS test Sandbox
+    const testRes = await kiemTraSandbox({
+      userId,
+      conversationId,
+      language,
+      code,
+      testCode: "",
+      signal,
+    });
+
+    // Lưu code user gửi vào artifact để lần sau có thể sửa tiếp
+    try {
+      await saveArtifact({
+        userId,
+        conversationId,
+        language,
+        code,
+        version: (currentCode?.version || 0) + 1,
+      });
+    } catch {
+      /* bỏ qua */
+    }
+
+    if (testRes.ok) {
+      // PASS → báo User không lỗi, KHÔNG giao lính
+      return {
+        ok: true,
+        text:
+          "✅ Code của bạn đã vượt qua kiểm thử — không phát hiện lỗi.\n\n" +
+          "Bạn có thể yêu cầu thêm tính năng hoặc chỉnh sửa nếu muốn.",
+        meta: {
+          action: "test-sandbox-pass",
+          sandbox: {
+            status: testRes.status,
+            runId: testRes.runId,
+            version: testRes.version,
+          },
+        },
+      };
+    }
+
+    // FAIL → báo lỗi + hỏi User có muốn sửa không
+    const errText = testRes.stderr || testRes.error || "Không rõ lỗi";
+
+    return {
+      ok: true,
+      text:
+        "⚠ Code của bạn CÓ LỖI khi chạy thử:\n\n" +
+        "```\n" +
+        String(errText).slice(0, 1000) +
+        "\n```\n\n" +
+        "Bạn có muốn tôi sửa không? Trả lời **Có** để tôi giao việc sửa.",
+      meta: {
+        action: "test-sandbox-fail",
+        sandbox: {
+          status: testRes.status,
+          runId: testRes.runId,
+          version: testRes.version,
+        },
+        stderr: errString(errText),
+        language,
+        code,
+        pendingFix: true,
+      },
+    };
+  }
+
   // ===== SEARCH_WEB =====
   if (parsed.type === "tool" && parsed.tool === "search_web") {
     const query = parsed.args?.query || userRequest;
@@ -311,7 +405,21 @@ async function runBossPipeline({
 }
 
 // ============================================================
-// PROMPT BOSS — NGUYÊN TẮC, KHÔNG TỪ KHÓA CỨNG
+// HELPER: ép lỗi về string
+// ============================================================
+
+function errString(e) {
+  if (typeof e === "string") return e;
+  if (e && typeof e.message === "string") return e.message;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+// ============================================================
+// PROMPT BOSS — 2 TRƯỜNG HỢP
 // ============================================================
 
 function buildBossMessages({ userRequest, history = [], currentCode = null }) {
@@ -333,25 +441,61 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "   - Dữ liệu cập nhật.\n" +
         "\n" +
         "3. 🧪 SANDBOX — công cụ kiểm thử code:\n" +
-        "   - Khi lính trả code → tự động chạy.\n" +
+        "   - Khi cần chạy thử code → Sandbox tự chạy.\n" +
         "   - PASS → báo User 'Code đã vượt qua kiểm thử'.\n" +
-        "   - FAIL → báo User 'Code chưa PASS, có thể bấm Sửa tiếp'.\n" +
-        "   - Vòng lặp sửa cho tới khi PASS.\n" +
+        "   - FAIL → báo User 'Code chưa PASS' + mô tả lỗi.\n" +
         "\n" +
-        "NGUYÊN TẮC HOẠT ĐỘNG:\n" +
+        "========================================\n" +
+        "QUY TẮC PHÂN BIỆT 2 TRƯỜNG HỢP:\n" +
+        "========================================\n" +
+        "\n" +
+        "🅰️ TRƯỜNG HỢP 1 — USER GỬI CODE ĐỂ KIỂM TRA:\n" +
+        "\n" +
+        "Dấu hiệu nhận biết:\n" +
+        "   - User dán code (có ```<lang>...```) hoặc gửi file code.\n" +
+        "   - User nói: 'kiểm tra', 'check', 'test', 'có lỗi không',\n" +
+        "     'review', 'bug', 'chạy được không', 'sai chỗ nào'.\n" +
+        "\n" +
+        "Cách xử lý:\n" +
+        "   BƯỚC 1: Gọi tool 'test_sandbox' để test code TRƯỚC.\n" +
+        "   BƯỚC 2a: Nếu Sandbox PASS → báo User: 'Code không có lỗi'.\n" +
+        "            KHÔNG giao lính. Kết thúc.\n" +
+        "   BƯỚC 2b: Nếu Sandbox FAIL → báo User:\n" +
+        "            'Code có lỗi ở [chỗ X]: [mô tả lỗi]'\n" +
+        "            Và HỎI User: 'Bạn có muốn tôi sửa không?'\n" +
+        "   BƯỚC 3: CHỜ User trả lời.\n" +
+        "            - User nói KHÔNG → kết thúc.\n" +
+        "            - User nói CÓ → gọi 'delegate_soldier' với taskType='fix-code'.\n" +
+        "\n" +
+        "🅱️ TRƯỜNG HỢP 2 — USER YÊU CẦU LÀM CODE MỚI:\n" +
+        "\n" +
+        "Dấu hiệu nhận biết:\n" +
+        "   - User nói: 'làm', 'tạo', 'viết', 'xây dựng',\n" +
+        "     'thiết kế', 'triển khai' + mô tả sản phẩm.\n" +
+        "   - KHÔNG có code sẵn trong tin nhắn.\n" +
+        "\n" +
+        "Cách xử lý:\n" +
+        "   - Gọi 'delegate_soldier' với taskType='code'.\n" +
+        "   - Lính viết code → BOSS test Sandbox → PASS/FAIL.\n" +
+        "   - Nếu FAIL → giao lính sửa → test lại → tới khi PASS.\n" +
+        "   - Trả kết quả cho User.\n" +
+        "\n" +
+        "========================================\n" +
+        "CÁC QUY TẮC KHÁC:\n" +
+        "========================================\n" +
         "\n" +
         "1. CHAT với User để HIỂU rõ yêu cầu.\n" +
         "   - Chào hỏi → trả lời tự nhiên.\n" +
         "   - Chưa rõ → HỎI LẠI.\n" +
         "   - Đang thảo luận → tiếp tục chat.\n" +
         "\n" +
-        "2. Khi User ĐÃ QUYẾT ĐỊNH làm (bạn TỰ ĐỌC ngữ cảnh để hiểu):\n" +
+        "2. Khi User ĐÃ QUYẾT ĐỊNH làm:\n" +
         "   - Cần sản phẩm (code/văn) → giao LÍNH.\n" +
         "   - Cần thông tin mới → gọi WEB.\n" +
         "\n" +
-        "3. Bạn TỰ HIỂU khi nào User đã quyết định dựa vào NGỮ CẢNH — không cần từ khóa cứng.\n" +
-        "   Ví dụ User nói 'làm đi', 'triển đi', 'OK', 'chốt', 'bắt đầu' — tùy ngữ cảnh.\n" +
-        "   Nhưng nếu User chỉ đang mô tả / hỏi → CHƯA quyết định → tiếp tục chat.\n" +
+        "3. Bạn TỰ HIỂU khi nào User đã quyết định dựa vào NGỮ CẢNH.\n" +
+        "   Ví dụ: 'làm đi', 'triển đi', 'OK', 'chốt', 'bắt đầu'.\n" +
+        "   Nếu User chỉ mô tả / hỏi → CHƯA quyết định → tiếp tục chat.\n" +
         "\n" +
         "4. Khi có code:\n" +
         "   - Sandbox TỰ CHẠY (bạn không cần gọi).\n" +
@@ -359,15 +503,26 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "   - Nếu FAIL → hướng dẫn User bấm 'Sửa tiếp'.\n" +
         "\n" +
         "5. Khi User bảo SỬA sau khi có code:\n" +
-        "   - Bạn hiểu là sửa → giao LÍNH taskType='fix-code'.\n" +
+        "   - Giao LÍNH taskType='fix-code'.\n" +
         "\n" +
         "6. Bạn KHÔNG ĐƯỢC tự viết code / văn dài — luôn giao LÍNH.\n" +
         "\n" +
+        "========================================\n" +
         "CÁCH TRẢ LỜI:\n" +
+        "========================================\n" +
         "\n" +
         "【Chat / Hỏi lại】→ TEXT tự nhiên.\n" +
         "Ví dụ: \"Xin chào! Tôi có thể giúp gì?\"\n" +
-        "Ví dụ: \"Để tôi rõ hơn: bạn muốn web bán gì? Bao nhiêu trang?\"\n" +
+        "Ví dụ: \"Để tôi rõ hơn: bạn muốn web bán gì?\"\n" +
+        "\n" +
+        "【Test Sandbox code User gửi】→ JSON:\n" +
+        "{\n" +
+        "  \"tool\": \"test_sandbox\",\n" +
+        "  \"args\": {\n" +
+        "    \"language\": \"html|javascript|python\",\n" +
+        "    \"code\": \"<toàn bộ code user gửi>\"\n" +
+        "  }\n" +
+        "}\n" +
         "\n" +
         "【Tra web】→ JSON:\n" +
         "{\"tool\": \"search_web\", \"args\": {\"query\": \"...\"}}\n" +
@@ -659,7 +814,7 @@ async function runSoldierWork({
         break;
       }
 
-      const lastError = testRes.stderr || testRes.error || "Không rõ";
+      const lastError = errString(testRes.stderr || testRes.error || "Không rõ");
 
       await logWarn(`BOSS: Sandbox FAIL vòng ${iteration}`, {
         userId,
