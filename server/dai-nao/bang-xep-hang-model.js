@@ -1,18 +1,13 @@
 // server/dai-nao/bang-xep-hang-model.js
-// Nhiệm vụ: Bảng xếp hạng sức mạnh model cho Đại Não.
-//
-// Điểm sức mạnh:
-//   - ỨNG CỬ VIÊN 1 (priority 1-4) → 90-100
-//   - ỨNG CỬ VIÊN 2 (priority 10+) → 60-89
-//
-// Model không có trong bảng → 60.
+// Bảng điểm sức mạnh model Đại Não.
+// ƯCV1: 90-100 | ƯCV2: 60-89 | Không có: 60.
 
 const RANK = {
   // ===== ỨNG CỬ VIÊN 1 =====
-  "nvidia/nemotron-3-ultra-550b-a55b:free": 100,
-  "gemini-3.8-flash": 98,
-  "nvidia/nemotron-3-super-120b-a12b:free": 95,
-  "thinking-machines/inkling:free": 92,
+  "gemini-3.8-flash": 100,
+  "nvidia/nemotron-3-ultra-550b-a55b:free": 98,
+  "thinking-machines/inkling:free": 95,
+  "nvidia/nemotron-3-super-120b-a12b:free": 92,
 
   // ===== ỨNG CỬ VIÊN 2 =====
   // Gemini
@@ -23,7 +18,6 @@ const RANK = {
   "gemini-2.5-pro": 85,
   "gemini-2.5-flash": 83,
   "gemini-2.5-flash-lite": 80,
-
   // Groq
   "openai/gpt-oss-120b": 85,
   "openai/gpt-oss-20b": 78,
@@ -35,7 +29,6 @@ const RANK = {
   "qwen/qwen3.8-27b": 80,
   "groq/compound": 82,
   "groq/compound-mini": 76,
-
   // OpenRouter
   "cohere/north-mini-code:free": 82,
   "poolside/laguna-xs-2.1:free": 80,
@@ -56,29 +49,21 @@ const RANK = {
 
 export function layDiemSucManh(modelName, taskType = null) {
   if (!modelName) return 0;
-  const rank = RANK[modelName];
-  if (typeof rank === "number") return rank;
-  return 60;
+  return typeof RANK[modelName] === "number" ? RANK[modelName] : 60;
 }
 
 export function sapXepTheoSucManh(models, taskType = null) {
   if (!Array.isArray(models) || models.length === 0) return [];
-
   const withScore = models.map((m, idx) => ({
     ...m,
     _score: layDiemSucManh(m.name, taskType),
     _originalIndex: idx,
   }));
-
   withScore.sort((a, b) => {
     if (b._score !== a._score) return b._score - a._score;
     return a._originalIndex - b._originalIndex;
   });
-
   return withScore.map(({ _score, _originalIndex, ...rest }) => rest);
 }
 
-export default {
-  layDiemSucManh,
-  sapXepTheoSucManh,
-};
+export default { layDiemSucManh, sapXepTheoSucManh };

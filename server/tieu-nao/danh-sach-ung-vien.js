@@ -1,11 +1,6 @@
 // server/tieu-nao/danh-sach-ung-vien.js
 // Nhiệm vụ: Danh sách model ứng viên của Tiểu Não (lính).
-// Gồm model ưu tiên + model phụ (dự phòng).
-// Chỉ dò động khi HẾT tất cả model tĩnh + key.
-//
-// QUY TẮC DỰ ÁN:
-//   - Tiểu Não CHỈ dùng key của Tiểu Não (tieuNaoKeys).
-//   - KHÔNG dò/gọi model từ key Đại Não.
+// QUY TẮC: Tiểu Não CHỈ dùng key tieuNaoKeys — KHÔNG dùng key Đại Não.
 
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
@@ -25,14 +20,19 @@ export const TIEU_NAO_TASK = {
   BULK: "bulk",
 };
 
-const UNG_CU_VIEN_1_VA_2 = [
-  // ===== ỨNG CỬ VIÊN 1 =====
-  { name: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", priority: 1 },
-  { name: "gemini-3.8-flash", provider: "gemini", priority: 2 },
-  { name: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", priority: 3 },
-  { name: "thinking-machines/inkling:free", provider: "openrouter", priority: 4 },
+// ============================================================
+// LÍNH ƯCV1: chuyên code + context lớn
+// LÍNH ƯCV2: dự phòng
+// ============================================================
 
-  // ===== ỨNG CỬ VIÊN 2 =====
+const UNG_CU_VIEN_1_VA_2 = [
+  // ===== ỨNG CỬ VIÊN 1 (ưu tiên cao) =====
+  { name: "qwen/qwen3-coder:free", provider: "openrouter", priority: 1 },
+  { name: "cohere/north-mini-code:free", provider: "openrouter", priority: 2 },
+  { name: "gemini-3.8-flash", provider: "gemini", priority: 3 },
+  { name: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", priority: 4 },
+
+  // ===== ỨNG CỬ VIÊN 2 (dự phòng) =====
   // Gemini
   { name: "gemini-3.6-flash", provider: "gemini", priority: 10 },
   { name: "gemini-3.5-flash", provider: "gemini", priority: 11 },
@@ -41,7 +41,6 @@ const UNG_CU_VIEN_1_VA_2 = [
   { name: "gemini-2.5-pro", provider: "gemini", priority: 14 },
   { name: "gemini-2.5-flash", provider: "gemini", priority: 15 },
   { name: "gemini-2.5-flash-lite", provider: "gemini", priority: 16 },
-
   // Groq
   { name: "openai/gpt-oss-120b", provider: "groq", priority: 20 },
   { name: "openai/gpt-oss-20b", provider: "groq", priority: 21 },
@@ -53,17 +52,16 @@ const UNG_CU_VIEN_1_VA_2 = [
   { name: "qwen/qwen3.8-27b", provider: "groq", priority: 27 },
   { name: "groq/compound", provider: "groq", priority: 28 },
   { name: "groq/compound-mini", provider: "groq", priority: 29 },
-
   // OpenRouter
-  { name: "cohere/north-mini-code:free", provider: "openrouter", priority: 30 },
-  { name: "poolside/laguna-xs-2.1:free", provider: "openrouter", priority: 31 },
-  { name: "qwen/qwen3-coder:free", provider: "openrouter", priority: 32 },
-  { name: "liquid/lfm-2.5-2.6b:free", provider: "openrouter", priority: 33 },
-  { name: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", priority: 34 },
-  { name: "google/gemma-4-31b-it:free", provider: "openrouter", priority: 35 },
-  { name: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", provider: "openrouter", priority: 36 },
-  { name: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", priority: 37 },
-  { name: "nvidia/nemotron-3.5-content-safety:free", provider: "openrouter", priority: 38 },
+  { name: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", priority: 30 },
+  { name: "thinking-machines/inkling:free", provider: "openrouter", priority: 31 },
+  { name: "poolside/laguna-xs-2.1:free", provider: "openrouter", priority: 32 },
+  { name: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", provider: "openrouter", priority: 33 },
+  { name: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", priority: 34 },
+  { name: "nvidia/nemotron-3.5-content-safety:free", provider: "openrouter", priority: 35 },
+  { name: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", priority: 36 },
+  { name: "google/gemma-4-31b-it:free", provider: "openrouter", priority: 37 },
+  { name: "liquid/lfm-2.5-2.6b:free", provider: "openrouter", priority: 38 },
   { name: "apodex/apodex-1.1-mini:free", provider: "openrouter", priority: 39 },
   { name: "dots-studio/dots-3-note-preview:free", provider: "openrouter", priority: 40 },
   { name: "inclusionai/ling-3.0-flash-sante:free", provider: "openrouter", priority: 41 },
@@ -92,69 +90,36 @@ export function layTatCaUngVien() {
 
 export async function doModelDongTuProvider({ userId, provider }) {
   const mod = MODULES[provider];
-  if (!mod) {
-    return { ok: false, models: [], error: `Provider không hỗ trợ: ${provider}` };
-  }
+  if (!mod) return { ok: false, models: [], error: `Provider không hỗ trợ: ${provider}` };
 
   const keys = await listKeysByProvider(userId, provider);
   const usableKeys = keys.filter((k) => k.quota !== "out");
-
   if (usableKeys.length === 0) {
-    return {
-      ok: false,
-      models: [],
-      error: `Provider ${provider} không có key còn quota`,
-    };
+    return { ok: false, models: [], error: `Provider ${provider} không có key còn quota` };
   }
 
   const key = usableKeys[0];
-
   try {
     const res = await mod.verifyKey(key.rawKey);
-    if (!res.ok) {
-      return {
-        ok: false,
-        models: [],
-        error: res.error || `Dò model từ ${provider} thất bại`,
-      };
-    }
-
+    if (!res.ok) return { ok: false, models: [], error: res.error || `Dò model từ ${provider} thất bại` };
     const models = Array.isArray(res.models) ? res.models.filter(Boolean) : [];
-
-    await logInfo("Tiểu Não: dò model động thành công", {
-      userId,
-      provider,
-      count: models.length,
-    });
-
+    await logInfo("Tiểu Não: dò model động thành công", { userId, provider, count: models.length });
     return { ok: true, models };
   } catch (err) {
-    await logWarn("Tiểu Não: dò model động lỗi", {
-      userId,
-      provider,
-      error: err?.message || String(err),
-    });
-    return {
-      ok: false,
-      models: [],
-      error: err?.message || "Lỗi không xác định",
-    };
+    await logWarn("Tiểu Não: dò model động lỗi", { userId, provider, error: err?.message || String(err) });
+    return { ok: false, models: [], error: err?.message || "Lỗi không xác định" };
   }
 }
 
 export async function doTatCaModelDong({ userId }) {
   const allProviders = Object.keys(MODULES);
   const result = [];
-
   for (const provider of allProviders) {
     const res = await doModelDongTuProvider({ userId, provider });
     if (res.ok) {
-      for (const name of res.models) {
-        result.push({ name, provider });
-      }
+      for (const name of res.models) result.push({ name, provider });
     }
   }
-
   return result;
 }
 

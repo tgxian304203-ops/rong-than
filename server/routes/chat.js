@@ -5,6 +5,7 @@
 // QUY TẮC DỰ ÁN (PHẦN 01 mục 10, PHẦN 02 Luồng 3):
 //   - MỌI nhiệm vụ liên quan code/fix/kiểm tra PHẢI qua BOSS test Sandbox.
 //   - Route KHÔNG được gọi thẳng sandbox/chay-kiem-thu.js.
+//   - BOSS viết format sửa dựa trên TOÀN BỘ code (không cắt).
 
 import express from "express";
 import multer from "multer";
@@ -631,7 +632,6 @@ async function runSoldierWork({
         elapsedMs: Date.now() - startTime,
       });
 
-      // ===== BOSS TEST SANDBOX (không gọi thẳng chayKiemThu) =====
       const testRes = await kiemTraSandbox({
         userId,
         conversationId,
@@ -781,7 +781,7 @@ async function runSoldierWork({
 }
 
 // ============================================================
-// BOSS VIẾT FORMAT SỬA
+// BOSS VIẾT FORMAT SỬA — DÙNG TOÀN BỘ CODE
 // ============================================================
 
 function buildBossFixMessages({
@@ -796,7 +796,7 @@ function buildBossFixMessages({
       role: "system",
       content:
         "Bạn là BOSS. Code của lính bị lỗi Sandbox.\n" +
-        "Đọc lỗi + viết FORMAT cho lính sửa.\n" +
+        "Đọc TOÀN BỘ CODE + lỗi + viết FORMAT cho lính sửa.\n" +
         "\n" +
         "Trả về DUY NHẤT 1 JSON:\n" +
         "{\n" +
@@ -818,12 +818,12 @@ function buildBossFixMessages({
         "",
         "Lỗi Sandbox:",
         "```",
-        stderr.slice(0, 800),
+        stderr,
         "```",
         "",
-        "Code hiện tại:",
-        "```",
-        failedCode.slice(0, 1500),
+        "Code hiện tại (TOÀN BỘ):",
+        "```" + language,
+        failedCode,
         "```",
         "",
         "Viết format sửa cho lính (JSON).",
@@ -1295,7 +1295,6 @@ async function runChunkedDelegate({
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
 
-    // ===== BOSS TEST SANDBOX (không gọi thẳng chayKiemThu) =====
     try {
       const testRes = await kiemTraSandbox({
         userId,
