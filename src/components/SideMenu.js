@@ -5,10 +5,9 @@
 //   - Phủ 100% màn hình ứng dụng
 //   - Nút × ở góc trên bên phải để đóng
 //   - Thứ tự: New Chat → Dự án → Lịch sử trò chuyện → Cài đặt
-//   - Khu vực tài khoản ở cuối:
-//       + Chưa đăng nhập: hiển thị [Đăng nhập] và [Đăng ký]
-//       + Đã đăng nhập: chỉ hiển thị [Đăng xuất]
-//   - Không thêm mục ngoài đặc tả.
+//   - Khu vực tài khoản ở cuối
+//   - Menu nền trong suốt 0% (transparent)
+//   - Các nút menu có nền kính trong suốt 10% + viền
 
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -52,7 +51,7 @@ export default function SideMenu() {
 
   return (
     <>
-      {/* LỚP PHỦ 100% MÀN HÌNH */}
+      {/* LỚP PHỦ 100% MÀN HÌNH — NỀN TRONG SUỐT 0% */}
       <div
         role="dialog"
         aria-modal="true"
@@ -95,6 +94,10 @@ export default function SideMenu() {
               fontSize: "var(--font-xl)",
               color: "var(--color-text-primary)",
               borderRadius: "var(--radius-md)",
+              backgroundColor: "rgba(255, 255, 255, 0.1)",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
             }}
           >
             ×
@@ -131,6 +134,7 @@ export default function SideMenu() {
                 letterSpacing: "1px",
                 marginBottom: "var(--space-3)",
                 paddingLeft: "var(--space-3)",
+                textShadow: "0 1px 4px rgba(0,0,0,0.8)",
               }}
             >
               Khu vực tài khoản
@@ -146,6 +150,7 @@ export default function SideMenu() {
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
+                    textShadow: "0 1px 4px rgba(0,0,0,0.8)",
                   }}
                   title={user?.userId || ""}
                 >
@@ -169,10 +174,14 @@ export default function SideMenu() {
                   style={{
                     height: 44,
                     borderRadius: "var(--radius-md)",
-                    border: "1px solid var(--color-border-strong)",
                     color: "var(--color-text-primary)",
                     fontSize: "var(--font-sm)",
                     fontWeight: 600,
+                    backgroundColor: "rgba(255, 255, 255, 0.1)",
+                    border: "1px solid rgba(255, 255, 255, 0.2)",
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
+                    textShadow: "0 1px 4px rgba(0,0,0,0.8)",
                   }}
                 >
                   Đăng nhập
@@ -184,10 +193,13 @@ export default function SideMenu() {
                   style={{
                     height: 44,
                     borderRadius: "var(--radius-md)",
-                    backgroundColor: "var(--color-success)",
+                    backgroundColor: "rgba(34, 197, 94, 0.85)",
+                    border: "1px solid rgba(34, 197, 94, 0.5)",
                     color: "#04150a",
                     fontSize: "var(--font-sm)",
                     fontWeight: 700,
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
                   }}
                 >
                   Đăng ký
@@ -210,7 +222,7 @@ export default function SideMenu() {
 }
 
 // ============================================================
-// MỤC MENU
+// MỤC MENU — NỀN KÍNH TRONG SUỐT 10% + VIỀN
 // ============================================================
 function MenuItem({ label, icon, onClick }) {
   return (
@@ -229,19 +241,24 @@ function MenuItem({ label, icon, onClick }) {
         color: "var(--color-text-primary)",
         fontSize: "var(--font-md)",
         textAlign: "left",
+        backgroundColor: "rgba(255, 255, 255, 0.1)",
+        border: "1px solid rgba(255, 255, 255, 0.15)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        textShadow: "0 1px 4px rgba(0,0,0,0.8)",
         transition: "background-color var(--duration-fast) var(--ease-out)",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.06)";
+        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.18)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
+        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
       }}
       onTouchStart={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.2)";
       }}
       onTouchEnd={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
+        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
       }}
     >
       <span
