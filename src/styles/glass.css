@@ -1,6 +1,10 @@
 /* src/styles/glass.css
-   Nhiệm vụ: Hiệu ứng kính trong suốt ~50% cho khung tin nhắn,
-   menu, dialog — theo quy tắc giao diện dự án. */
+   Nhiệm vụ: Hiệu ứng kính trong suốt cho khung tin nhắn, menu, dialog.
+   Quy tắc giao diện dự án:
+     - Khung tin nhắn: trong suốt ~50%
+     - Menu chính: trong suốt ~30%
+     - HeaderBar: trong suốt ~30%
+*/
 
 /* ===== KHUNG TIN NHẮN GLASS (nền trong suốt ~50%) ===== */
 .glass-bubble {
@@ -26,11 +30,19 @@
   color: var(--color-user-text);
 }
 
-/* ===== MENU PHỦ TOÀN MÀN HÌNH GLASS ===== */
+/* ===== MENU PHỦ TOÀN MÀN HÌNH GLASS (trong suốt ~30%) ===== */
 .glass-menu {
-  background-color: rgba(10, 10, 10, 0.92);
+  background-color: rgba(10, 10, 10, 0.3);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+}
+
+/* ===== HEADER BAR (trong suốt ~30%) ===== */
+.glass-header {
+  background-color: rgba(10, 10, 10, 0.3);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* ===== DIALOG XÁC NHẬN ===== */
@@ -65,6 +77,7 @@
 @supports not (backdrop-filter: blur(10px)) {
   .glass-bubble,
   .glass-menu,
+  .glass-header,
   .glass-dialog,
   .glass-inputbar,
   .glass-card {
@@ -80,7 +93,14 @@
     background-color: rgba(255, 255, 255, 0.12);
   }
 
-  .glass-menu,
+  .glass-menu {
+    background-color: rgba(10, 10, 10, 0.95);
+  }
+
+  .glass-header {
+    background-color: rgba(10, 10, 10, 0.95);
+  }
+
   .glass-dialog {
     background-color: rgba(20, 20, 20, 0.98);
   }

@@ -1,6 +1,6 @@
 // src/components/HeaderBar.js
 // Nhiệm vụ: Thanh trên cùng cho mọi màn hình.
-// KHÔNG có nền/viền — chỉ có nút và logo nổi.
+// Nền trong suốt 30% (glass-header).
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
@@ -25,7 +25,7 @@ export default function HeaderBar({
 
   return (
     <header
-      className="safe-top"
+      className="safe-top glass-header"
       style={{
         position: "sticky",
         top: 0,
@@ -35,9 +35,6 @@ export default function HeaderBar({
         gridTemplateColumns: "56px 1fr 56px",
         alignItems: "center",
         padding: "0 var(--space-2)",
-        // KHÔNG có backgroundColor, backdropFilter, borderBottom
-        backgroundColor: "transparent",
-        borderBottom: "none",
       }}
     >
       {/* Ô TRÁI */}
