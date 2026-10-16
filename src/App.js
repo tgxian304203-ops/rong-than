@@ -1,13 +1,6 @@
 // src/App.js
 // Nhiệm vụ: Định tuyến toàn bộ ứng dụng Rồng Thần.
-// Bọc 4 Provider:
-//   AuthProvider → UIProvider → ProjectProvider → ChatProvider
-// Gắn SideMenu và ConfirmDialog ở cấp toàn cục (bên trong Provider).
-//
-// Thứ tự Provider có ý nghĩa:
-//   - AuthProvider ngoài cùng vì UI và các store khác có thể cần user
-//   - UIProvider cần trước Project/Chat vì chúng gọi confirm(), toast()
-//   - Project/Chat độc lập nhau, xếp sau
+// Bọc 4 Provider + bọc class bg-dragon-overlay để mọi trang đều thấy ảnh nền.
 
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
@@ -45,50 +38,59 @@ export default function App() {
       <UIProvider>
         <ProjectProvider>
           <ChatProvider>
-            <Routes>
-              {/* Màn hình chat chính */}
-              <Route path="/" element={<ChatMain />} />
-              <Route path="/new-chat" element={<NewChat />} />
+            <div
+              className="bg-dragon-overlay"
+              style={{
+                height: "100%",
+                width: "100%",
+                overflow: "hidden",
+              }}
+            >
+              <Routes>
+                {/* Màn hình chat chính */}
+                <Route path="/" element={<ChatMain />} />
+                <Route path="/new-chat" element={<NewChat />} />
 
-              {/* Dự án */}
-              <Route path="/projects" element={<ProjectsList />} />
-              <Route path="/projects/:projectId" element={<ProjectDetail />} />
+                {/* Dự án */}
+                <Route path="/projects" element={<ProjectsList />} />
+                <Route path="/projects/:projectId" element={<ProjectDetail />} />
 
-              {/* Lịch sử trò chuyện */}
-              <Route path="/history" element={<History />} />
+                {/* Lịch sử trò chuyện */}
+                <Route path="/history" element={<History />} />
 
-              {/* Cài đặt */}
-              <Route path="/settings" element={<Settings />} />
+                {/* Cài đặt */}
+                <Route path="/settings" element={<Settings />} />
 
-              {/* Dán Key */}
-              <Route path="/paste-key" element={<PasteKey />} />
-              <Route path="/paste-key/dai-nao" element={<DaiNao />} />
-              <Route path="/paste-key/tieu-nao" element={<TieuNao />} />
-              <Route path="/paste-key/web" element={<WebPage />} />
+                {/* Dán Key */}
+                <Route path="/paste-key" element={<PasteKey />} />
+                <Route path="/paste-key/dai-nao" element={<DaiNao />} />
+                <Route path="/paste-key/tieu-nao" element={<TieuNao />} />
+                <Route path="/paste-key/web" element={<WebPage />} />
 
-              {/* Cài đặt tài khoản */}
-              <Route path="/account" element={<Account />} />
-              <Route path="/account/change-id" element={<ChangeId />} />
-              <Route
-                path="/account/change-password"
-                element={<ChangePassword />}
-              />
-              <Route path="/account/delete" element={<DeleteAccount />} />
+                {/* Cài đặt tài khoản */}
+                <Route path="/account" element={<Account />} />
+                <Route path="/account/change-id" element={<ChangeId />} />
+                <Route
+                  path="/account/change-password"
+                  element={<ChangePassword />}
+                />
+                <Route path="/account/delete" element={<DeleteAccount />} />
 
-              {/* Đăng ký / Đăng nhập */}
-              <Route path="/register" element={<Register />} />
-              <Route path="/login" element={<Login />} />
+                {/* Đăng ký / Đăng nhập */}
+                <Route path="/register" element={<Register />} />
+                <Route path="/login" element={<Login />} />
 
-              {/* Rồng Thần Logs */}
-              <Route path="/logs" element={<Logs />} />
+                {/* Rồng Thần Logs */}
+                <Route path="/logs" element={<Logs />} />
 
-              {/* Fallback — quay về chat chính */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+                {/* Fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
 
-            {/* Thành phần toàn cục — nằm trong Provider để dùng được hook */}
-            <SideMenu />
-            <ConfirmDialog />
+              {/* Thành phần toàn cục */}
+              <SideMenu />
+              <ConfirmDialog />
+            </div>
           </ChatProvider>
         </ProjectProvider>
       </UIProvider>
