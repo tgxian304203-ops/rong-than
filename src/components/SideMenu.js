@@ -8,6 +8,7 @@
 //   - Khu vực tài khoản ở cuối
 //   - Menu nền trong suốt 0% (transparent)
 //   - Các nút menu có nền kính trong suốt 10% + viền
+//   - Nền KHÔNG đổi khi hover/nhấn
 
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -19,7 +20,6 @@ export default function SideMenu() {
   const { menuOpen, closeMenu, confirm } = useUI();
   const { isAuthenticated, user, logout } = useAuth();
 
-  // Khóa scroll body khi menu mở
   useEffect(() => {
     if (!menuOpen) return;
     const prev = document.body.style.overflow;
@@ -222,7 +222,7 @@ export default function SideMenu() {
 }
 
 // ============================================================
-// MỤC MENU — NỀN KÍNH TRONG SUỐT 10% + VIỀN
+// MỤC MENU — NỀN KÍNH 10% CỐ ĐỊNH (không đổi khi hover/nhấn)
 // ============================================================
 function MenuItem({ label, icon, onClick }) {
   return (
@@ -246,19 +246,6 @@ function MenuItem({ label, icon, onClick }) {
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
         textShadow: "0 1px 4px rgba(0,0,0,0.8)",
-        transition: "background-color var(--duration-fast) var(--ease-out)",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.18)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
-      }}
-      onTouchStart={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.2)";
-      }}
-      onTouchEnd={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
       }}
     >
       <span
