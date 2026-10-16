@@ -2,8 +2,9 @@
    Nhiệm vụ: Hiệu ứng kính trong suốt cho khung tin nhắn, menu, dialog.
    Quy tắc giao diện dự án:
      - Khung tin nhắn: trong suốt ~50%
-     - Menu chính: trong suốt 0% (hoàn toàn)
-     - HeaderBar: trong suốt 0% (hoàn toàn)
+     - Menu chính: trong suốt 0%
+     - HeaderBar: trong suốt 0%
+     - Card / nút / ô nhập: kính trong suốt 10% + viền
 */
 
 /* ===== KHUNG TIN NHẮN GLASS (nền trong suốt ~50%) ===== */
@@ -50,21 +51,21 @@
   box-shadow: var(--shadow-lg);
 }
 
-/* ===== Ô NHẬP CHAT ===== */
+/* ===== Ô NHẬP / THANH NHẬP — KÍNH 10% ===== */
 .glass-inputbar {
-  background-color: rgba(20, 20, 20, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--color-border);
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-radius: var(--radius-lg);
 }
 
-/* ===== CARD DỰ ÁN / KEY ===== */
+/* ===== CARD / NÚT — KÍNH 10% + VIỀN ===== */
 .glass-card {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
@@ -91,6 +92,10 @@
   }
 
   .glass-inputbar {
-    background-color: rgba(20, 20, 20, 0.95);
+    background-color: rgba(20, 20, 20, 0.9);
+  }
+
+  .glass-card {
+    background-color: rgba(20, 20, 20, 0.9);
   }
 }
