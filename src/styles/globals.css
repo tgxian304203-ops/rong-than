@@ -1,12 +1,15 @@
 /* src/styles/globals.css
    Nhiệm vụ: Reset + nền tảng toàn cục
-   Đảm bảo hiển thị đúng trên Android, iPhone, dọc/ngang. */
+   Đảm bảo hiển thị đúng trên Android, iPhone, dọc/ngang.
+   Tắt hoàn toàn tap highlight khi nhấn nút.
+*/
 
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
 }
 
 html,
@@ -15,6 +18,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -29,7 +33,56 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Nút và input kế thừa font hệ thống */
+/* ============================================================
+   TẮT TAP HIGHLIGHT — MOBILE
+   ============================================================ */
+
+button,
+a,
+input,
+textarea,
+select,
+[role="button"],
+[tabindex] {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+  -webkit-touch-callout: none;
+  outline: none;
+}
+
+button:active,
+button:focus,
+button:focus-visible,
+button:focus-within,
+a:active,
+a:focus,
+[role="button"]:active,
+[role="button"]:focus,
+[tabindex]:active,
+[tabindex]:focus {
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Giữ nguyên nền khi nhấn cho glass-card + glass-inputbar */
+.glass-card:active,
+.glass-card:hover,
+.glass-card:focus {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.glass-inputbar:active,
+.glass-inputbar:hover,
+.glass-inputbar:focus {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* ============================================================
+   CÁC STYLE CŨ
+   ============================================================ */
+
 button,
 input,
 textarea,
@@ -89,7 +142,7 @@ img {
   border-radius: 2px;
 }
 
-/* Vùng an toàn cho iPhone (tai thỏ, đáy) */
+/* Vùng an toàn cho iPhone */
 .safe-top {
   padding-top: env(safe-area-inset-top, 0);
 }
@@ -98,13 +151,11 @@ img {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
-/* Chống chọn văn bản khi nhấn nút */
 .no-select {
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* Ẩn nhưng vẫn cho screen reader đọc */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -117,27 +168,17 @@ img {
   border: 0;
 }
 
-/* Chống zoom double-tap trên iOS */
 input,
 textarea,
 button {
   touch-action: manipulation;
 }
 
-/* ============================================================
-   KHOẢNG CÁCH 1mm GIỮA THANH NHẬP VÀ BÀN PHÍM
-   ============================================================
-   Theo PHẦN 04, mục 2.G: thanh nhập cách bàn phím 1mm.
-   1mm ≈ 3.78px → dùng 4px cho an toàn.
-   ============================================================ */
-
 .inputbar-keyboard-gap {
-  /* Khi bàn phím mở, có khoảng trống 4px (~1mm) phía dưới */
   padding-bottom: calc(4px + env(safe-area-inset-bottom, 0));
   transition: padding-bottom 0.2s ease-out;
 }
 
-/* Trường hợp KHÔNG có bàn phím — padding bình thường */
 .inputbar-no-keyboard {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
