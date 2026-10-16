@@ -1,19 +1,21 @@
 // src/components/SideMenu.js
-// Nhiệm vụ: Menu chính bên trái
-// Quy tắc dự án:
-//   - Trượt từ trái sang phải
-//   - Phủ 100% màn hình ứng dụng
-//   - Nút × ở góc trên bên phải để đóng
-//   - Thứ tự: New Chat → Dự án → Lịch sử trò chuyện → Cài đặt
-//   - Khu vực tài khoản ở cuối
-//   - Menu nền trong suốt 0% (transparent)
-//   - Các nút menu có nền kính trong suốt 10% + viền
-//   - Nền KHÔNG đổi khi hover/nhấn
+// Nhiệm vụ: Menu chính bên trái.
+// Đã thay emoji bằng SVG (trừ các emoji được giữ).
 
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUI } from "../store/uiStore.js";
 import { useAuth } from "../store/authStore.js";
+import {
+  IconMessagePlus,
+  IconFolder,
+  IconHistory,
+  IconSettings,
+  IconLogout,
+  IconLogin,
+  IconUserPlus,
+  IconClose,
+} from "./Icons.js";
 
 export default function SideMenu() {
   const navigate = useNavigate();
@@ -51,7 +53,6 @@ export default function SideMenu() {
 
   return (
     <>
-      {/* LỚP PHỦ 100% MÀN HÌNH — NỀN TRONG SUỐT 0% */}
       <div
         role="dialog"
         aria-modal="true"
@@ -66,7 +67,6 @@ export default function SideMenu() {
           animation: "menu-slide-in var(--duration-base) var(--ease-out)",
         }}
       >
-        {/* THANH ĐÓNG × */}
         <div
           className="safe-top"
           style={{
@@ -91,7 +91,6 @@ export default function SideMenu() {
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: "var(--font-xl)",
               color: "var(--color-text-primary)",
               borderRadius: "var(--radius-md)",
               backgroundColor: "rgba(255, 255, 255, 0.1)",
@@ -100,11 +99,10 @@ export default function SideMenu() {
               WebkitBackdropFilter: "blur(8px)",
             }}
           >
-            ×
+            <IconClose size={22} />
           </button>
         </div>
 
-        {/* DANH SÁCH MỤC */}
         <nav
           className="scroll-y safe-bottom"
           style={{
@@ -115,16 +113,27 @@ export default function SideMenu() {
             gap: "var(--space-2)",
           }}
         >
-          <MenuItem label="New Chat" icon="➕" onClick={() => go("/new-chat")} />
-          <MenuItem label="Dự án" icon="📁" onClick={() => go("/projects")} />
+          <MenuItem
+            label="New Chat"
+            icon={<IconMessagePlus size={20} />}
+            onClick={() => go("/new-chat")}
+          />
+          <MenuItem
+            label="Dự án"
+            icon={<IconFolder size={20} />}
+            onClick={() => go("/projects")}
+          />
           <MenuItem
             label="Lịch sử trò chuyện"
-            icon="🕘"
+            icon={<IconHistory size={20} />}
             onClick={() => go("/history")}
           />
-          <MenuItem label="Cài đặt" icon="⚙" onClick={() => go("/settings")} />
+          <MenuItem
+            label="Cài đặt"
+            icon={<IconSettings size={20} />}
+            onClick={() => go("/settings")}
+          />
 
-          {/* KHU VỰC TÀI KHOẢN */}
           <div style={{ marginTop: "auto", paddingTop: "var(--space-6)" }}>
             <div
               style={{
@@ -154,9 +163,13 @@ export default function SideMenu() {
                   }}
                   title={user?.userId || ""}
                 >
-                  👤 {user?.userId || ""}
+                  {user?.userId || ""}
                 </div>
-                <MenuItem label="Đăng xuất" icon="↩" onClick={handleLogout} />
+                <MenuItem
+                  label="Đăng xuất"
+                  icon={<IconLogout size={20} />}
+                  onClick={handleLogout}
+                />
               </>
             ) : (
               <div
@@ -182,8 +195,13 @@ export default function SideMenu() {
                     backdropFilter: "blur(8px)",
                     WebkitBackdropFilter: "blur(8px)",
                     textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
                   }}
                 >
+                  <IconLogin size={18} />
                   Đăng nhập
                 </button>
                 <button
@@ -200,8 +218,13 @@ export default function SideMenu() {
                     fontWeight: 700,
                     backdropFilter: "blur(8px)",
                     WebkitBackdropFilter: "blur(8px)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
                   }}
                 >
+                  <IconUserPlus size={18} />
                   Đăng ký
                 </button>
               </div>
@@ -210,7 +233,6 @@ export default function SideMenu() {
         </nav>
       </div>
 
-      {/* ANIMATION */}
       <style>{`
         @keyframes menu-slide-in {
           from { transform: translateX(-100%); opacity: 0.6; }
@@ -221,9 +243,6 @@ export default function SideMenu() {
   );
 }
 
-// ============================================================
-// MỤC MENU — NỀN KÍNH 10% CỐ ĐỊNH (không đổi khi hover/nhấn)
-// ============================================================
 function MenuItem({ label, icon, onClick }) {
   return (
     <button
@@ -250,7 +269,12 @@ function MenuItem({ label, icon, onClick }) {
     >
       <span
         aria-hidden="true"
-        style={{ fontSize: "var(--font-lg)", width: 24, textAlign: "center" }}
+        style={{
+          width: 24,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
       >
         {icon}
       </span>
