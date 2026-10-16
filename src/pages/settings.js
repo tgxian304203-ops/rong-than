@@ -1,13 +1,10 @@
 // src/pages/settings.js
 // Nhiệm vụ: Màn hình Cài đặt.
-// Quy tắc dự án (PHẦN 04, mục 9):
-//   - CHỈ CÓ 2 nút: 🗝 Dán Key, 👤 Cài đặt tài khoản
-//   - Logo 🌕🐉 ở góc trên phải (variant sub)
-//   - Không tự thêm mục cài đặt khác
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../components/HeaderBar.js";
+import { IconKey, IconUser } from "../components/Icons.js";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -24,10 +21,7 @@ export default function Settings() {
     >
       <HeaderBar variant="sub" title="Cài đặt" />
 
-      <div
-        className="scroll-y"
-        style={{ flex: 1, padding: "var(--space-4)" }}
-      >
+      <div className="scroll-y" style={{ flex: 1, padding: "var(--space-4)" }}>
         <h1
           style={{
             textAlign: "center",
@@ -49,12 +43,12 @@ export default function Settings() {
           }}
         >
           <BigButton
-            icon="🗝"
+            icon={<IconKey size={24} />}
             label="Dán Key"
             onClick={() => navigate("/paste-key")}
           />
           <BigButton
-            icon="👤"
+            icon={<IconUser size={24} />}
             label="Cài đặt tài khoản"
             onClick={() => navigate("/account")}
           />
@@ -82,7 +76,15 @@ function BigButton({ icon, label, onClick }) {
         textAlign: "left",
       }}
     >
-      <span aria-hidden="true" style={{ fontSize: "var(--font-xl)", width: 28 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 28,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         {icon}
       </span>
       <span>{label}</span>

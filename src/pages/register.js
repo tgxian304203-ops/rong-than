@@ -1,12 +1,5 @@
 // src/pages/register.js
 // Nhiệm vụ: Đăng ký.
-// Quy tắc dự án (PHẦN 04, mục 18):
-//   - 3 trường: ID tài khoản / Mật khẩu / Xác nhận mật khẩu
-//   - 👁 trên từng trường mật khẩu
-//   - Kiểm tra định dạng ID, ID chưa dùng
-//   - Mật khẩu + xác nhận phải trùng
-//   - KHÔNG tạo tài khoản nếu dữ liệu không hợp lệ
-//   - KHÔNG lưu mật khẩu dạng văn bản thuần
 
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
@@ -18,6 +11,7 @@ import {
   validatePassword,
   validatePasswordConfirm,
 } from "../utils/validate.js";
+import { IconEye, IconEyeOff } from "../components/Icons.js";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -34,7 +28,6 @@ export default function Register() {
 
   const handleSubmit = async () => {
     setError("");
-
     const idCheck = validateUserId(userId);
     if (!idCheck.ok) {
       setError(idCheck.error);
@@ -247,11 +240,10 @@ function PasswordInput({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-lg)",
             color: "var(--color-text-secondary)",
           }}
         >
-          {visible ? "🙈" : "👁"}
+          {visible ? <IconEyeOff size={20} /> : <IconEye size={20} />}
         </button>
       </div>
     </div>

@@ -1,11 +1,5 @@
 // src/pages/change-password.js
 // Nhiệm vụ: Đổi mật khẩu.
-// Quy tắc dự án (PHẦN 04, mục 16):
-//   - 3 trường: Mật khẩu hiện tại / Mật khẩu mới / Xác nhận mật khẩu mới
-//   - Mỗi trường có 👁 hiện/ẩn
-//   - Kiểm tra mật khẩu hiện tại
-//   - Mật khẩu mới và xác nhận phải trùng nhau
-//   - Chỉ báo thành công sau khi backend xác nhận
 
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +7,7 @@ import HeaderBar from "../components/HeaderBar.js";
 import { useAuth } from "../store/authStore.js";
 import { useUI } from "../store/uiStore.js";
 import { validatePassword, validatePasswordConfirm } from "../utils/validate.js";
+import { IconLock } from "../components/Icons.js";
 
 export default function ChangePassword() {
   const navigate = useNavigate();
@@ -30,7 +25,6 @@ export default function ChangePassword() {
 
   const handleSubmit = async () => {
     setError("");
-
     if (!current) {
       setError("Vui lòng nhập mật khẩu hiện tại");
       return;
@@ -86,9 +80,15 @@ export default function ChangePassword() {
             letterSpacing: "1px",
             color: "var(--color-text-primary)",
             marginBottom: "var(--space-5)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🔒 ĐỔI MẬT KHẨU
+          <IconLock size={24} />
+          ĐỔI MẬT KHẨU
         </h1>
 
         <PasswordField

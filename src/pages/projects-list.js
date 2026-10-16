@@ -1,13 +1,5 @@
 // src/pages/projects-list.js
 // Nhiệm vụ: Danh sách dự án.
-// Quy tắc dự án (PHẦN 04, mục 6):
-//   - Nút ← quay lại, tiêu đề 📁 DỰ ÁN
-//   - "Dự án của tôi" + nút ＋ tạo dự án mới
-//   - Ô tìm kiếm dự án
-//   - Thẻ dự án: tên + mô tả + nút × xóa
-//   - Xóa phải xác nhận
-//   - KHÔNG tạo dữ liệu giả khi backend chưa xác nhận
-//   - KHÔNG dùng window.prompt (không phù hợp mobile)
 
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -16,10 +8,11 @@ import ProjectCard from "../components/ProjectCard.js";
 import EmptyState from "../components/EmptyState.js";
 import { useProject } from "../store/projectStore.js";
 import { useUI } from "../store/uiStore.js";
+import { IconPlus, IconSearch } from "../components/Icons.js";
 
 export default function ProjectsList() {
   const navigate = useNavigate();
-  const { confirm, showToast } = useUI();
+  const { showToast } = useUI();
   const {
     filteredProjects,
     loading,
@@ -31,9 +24,6 @@ export default function ProjectsList() {
     deleteProject,
   } = useProject();
 
-  const [creating, setCreating] = useState(false);
-
-  // Modal tạo dự án (dùng state — không dùng window.prompt)
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -79,10 +69,7 @@ export default function ProjectsList() {
     }
 
     setSubmitting(true);
-    const res = await createProject({
-      name,
-      description: newDesc.trim(),
-    });
+    const res = await createProject({ name, description: newDesc.trim() });
     setSubmitting(false);
 
     if (res?.ok) {
@@ -103,10 +90,9 @@ export default function ProjectsList() {
         overflow: "hidden",
       }}
     >
-      <HeaderBar variant="sub" title="📁 Dự án" />
+      <HeaderBar variant="sub" title="Dự án" />
 
       <div className="scroll-y" style={{ flex: 1, padding: "var(--space-4)" }}>
-        {/* TIÊU ĐỀ + NÚT ＋ */}
         <div
           style={{
             display: "flex",
@@ -127,7 +113,6 @@ export default function ProjectsList() {
           <button
             type="button"
             onClick={openCreateModal}
-            disabled={creating}
             aria-label="Tạo dự án mới"
             className="no-select glass-card"
             style={{
@@ -136,16 +121,14 @@ export default function ProjectsList() {
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: "var(--font-xl)",
               color: "var(--color-ai-text)",
               borderRadius: "var(--radius-md)",
             }}
           >
-            ＋
+            <IconPlus size={22} />
           </button>
         </div>
 
-        {/* TÌM KIẾM */}
         <div
           className="glass-card"
           style={{
@@ -157,8 +140,14 @@ export default function ProjectsList() {
             marginBottom: "var(--space-4)",
           }}
         >
-          <span aria-hidden="true" style={{ textAlign: "center" }}>
-            🔍
+          <span
+            style={{
+              display: "inline-flex",
+              justifyContent: "center",
+              color: "var(--color-text-muted)",
+            }}
+          >
+            <IconSearch size={18} />
           </span>
           <input
             type="text"
@@ -177,16 +166,15 @@ export default function ProjectsList() {
           />
         </div>
 
-        {/* DANH SÁCH */}
         {loading ? (
-          <EmptyState icon="⏳" title="Đang tải dự án…" />
+          <EmptyState icon="loader" title="Đang tải dự án…" />
         ) : error ? (
-          <EmptyState icon="⚠" title="Không tải được dự án" subtitle={error} />
+          <EmptyState icon="warning" title="Không tải được dự án" subtitle={error} />
         ) : filteredProjects.length === 0 ? (
           <EmptyState
-            icon="📁"
+            icon="folder"
             title={search ? "Không tìm thấy dự án phù hợp" : "Chưa có dự án nào"}
-            subtitle={search ? "" : "Nhấn ＋ để tạo dự án mới"}
+            subtitle={search ? "" : "Nhấn nút + để tạo dự án mới"}
           />
         ) : (
           <div
@@ -208,7 +196,6 @@ export default function ProjectsList() {
         )}
       </div>
 
-      {/* MODAL TẠO DỰ ÁN */}
       {createModalOpen ? (
         <div
           role="dialog"

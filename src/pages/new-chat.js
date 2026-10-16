@@ -1,11 +1,5 @@
 // src/pages/new-chat.js
 // Nhiệm vụ: Tạo cuộc trò chuyện mới và mở màn hình chat.
-// Quy tắc dự án (PHẦN 04, mục 5):
-//   - Tạo phiên chat mới, tách biệt hội thoại trước
-//   - KHÔNG xóa hội thoại cũ
-//   - KHÔNG xóa dự án
-//   - KHÔNG xóa API Key đã lưu
-//   - Sau khi tạo xong → quay về màn hình chat chính
 
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -25,15 +19,12 @@ export default function NewChat() {
     let cancelled = false;
 
     async function init() {
-      // Reset trạng thái chat hiện tại ở client (không xóa gì trên backend)
       reset();
-
       const result = await createConversation({});
       if (cancelled) return;
 
       if (result?.ok) {
         showToast("Đã tạo cuộc trò chuyện mới", "success", 2000);
-        // Quay về màn hình chat chính với hội thoại mới đang mở
         navigate("/", { replace: true });
       } else {
         setError(result?.error || "Không tạo được cuộc trò chuyện");
@@ -64,10 +55,10 @@ export default function NewChat() {
         style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
       >
         {creating ? (
-          <EmptyState icon="⏳" title="Đang tạo cuộc trò chuyện mới…" />
+          <EmptyState icon="loader" title="Đang tạo cuộc trò chuyện mới…" />
         ) : error ? (
           <EmptyState
-            icon="⚠"
+            icon="warning"
             title="Không tạo được cuộc trò chuyện"
             subtitle={error}
             action={

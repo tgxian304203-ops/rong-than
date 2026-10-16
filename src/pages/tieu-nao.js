@@ -1,9 +1,5 @@
 // src/pages/tieu-nao.js
 // Nhiệm vụ: Trang quản lý API Key của Tiểu Não.
-// Quy tắc dự án (PHẦN 04, mục 12):
-//   - Thiết kế giống Đại Não, tiêu đề đổi thành 🧠 TIỂU NÃO
-//   - Dữ liệu key của Tiểu Não ĐỘC LẬP với Đại Não
-//   - KHÔNG trộn key giữa hai trang
 
 import React, { useCallback, useEffect, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -11,6 +7,7 @@ import KeyInput from "../components/KeyInput.js";
 import ProviderGroup from "../components/ProviderGroup.js";
 import { useUI } from "../store/uiStore.js";
 import { tieuNaoKeys } from "../api/keys.js";
+import { IconBrain } from "../components/Icons.js";
 
 export default function TieuNao() {
   const { showToast } = useUI();
@@ -98,9 +95,15 @@ export default function TieuNao() {
             letterSpacing: "1px",
             color: "var(--color-text-primary)",
             marginBottom: "var(--space-4)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🧠 TIỂU NÃO
+          <IconBrain size={24} />
+          TIỂU NÃO
         </h1>
 
         <div style={{ marginBottom: "var(--space-5)" }}>

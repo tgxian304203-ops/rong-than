@@ -1,17 +1,11 @@
 // src/pages/account.js
 // Nhiệm vụ: Cài đặt tài khoản.
-// Quy tắc dự án (PHẦN 04, mục 14):
-//   - CHỈ CÓ 3 chức năng:
-//       1. 🪪 Đổi ID tài khoản
-//       2. 🔒 Đổi mật khẩu
-//       3. 🗑️ Xóa tài khoản
-//   - Logo 🌕🐉 ở góc trên phải
-//   - Không thêm chức năng khác
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../components/HeaderBar.js";
 import { useAuth } from "../store/authStore.js";
+import { IconIdCard, IconLock, IconTrash } from "../components/Icons.js";
 
 export default function Account() {
   const navigate = useNavigate();
@@ -75,17 +69,17 @@ export default function Account() {
           }}
         >
           <BigButton
-            icon="🪪"
+            icon={<IconIdCard size={24} />}
             label="Đổi ID tài khoản"
             onClick={() => navigate("/account/change-id")}
           />
           <BigButton
-            icon="🔒"
+            icon={<IconLock size={24} />}
             label="Đổi mật khẩu"
             onClick={() => navigate("/account/change-password")}
           />
           <BigButton
-            icon="🗑️"
+            icon={<IconTrash size={24} />}
             label="Xóa tài khoản"
             tone="danger"
             onClick={() => navigate("/account/delete")}
@@ -115,7 +109,15 @@ function BigButton({ icon, label, onClick, tone = "default" }) {
         textAlign: "left",
       }}
     >
-      <span aria-hidden="true" style={{ fontSize: "var(--font-xl)", width: 28 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 28,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         {icon}
       </span>
       <span>{label}</span>

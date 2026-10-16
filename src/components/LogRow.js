@@ -1,9 +1,5 @@
 // src/components/LogRow.js
 // Nhiệm vụ: Một dòng log trong danh sách Rồng Thần Logs.
-// Quy tắc dự án:
-//   - Hiển thị thời gian, mức log, nội dung
-//   - Màu theo mức: INFO / WARN / ERROR / DEBUG
-//   - Không hiển thị mật khẩu, API key đầy đủ (backend đã che)
 
 import React from "react";
 import { formatTime } from "../utils/format.js";

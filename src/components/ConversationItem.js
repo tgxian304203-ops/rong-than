@@ -1,14 +1,10 @@
 // src/components/ConversationItem.js
-// Nhiệm vụ: Mục cuộc trò chuyện trong danh sách (lịch sử, dự án).
-// Quy tắc dự án:
-//   - Hiển thị tiêu đề cuộc trò chuyện
-//   - Có nút × ở góc trên phải (nếu cho phép xóa)
-//   - Xóa phải xác nhận
-//   - Không xóa dự án chứa cuộc trò chuyện đó
+// Nhiệm vụ: Mục cuộc trò chuyện trong danh sách.
 
 import React from "react";
 import { useUI } from "../store/uiStore.js";
 import { formatRelativeTime } from "../utils/format.js";
+import { IconMessage, IconClose } from "./Icons.js";
 
 export default function ConversationItem({
   conversation,
@@ -32,7 +28,9 @@ export default function ConversationItem({
     onDelete?.(conversation);
   };
 
-  const time = formatRelativeTime(conversation?.updatedAt || conversation?.createdAt);
+  const time = formatRelativeTime(
+    conversation?.updatedAt || conversation?.createdAt
+  );
 
   return (
     <div
@@ -63,10 +61,14 @@ export default function ConversationItem({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
         }}
         title={conversation?.title || ""}
       >
-        💬 {conversation?.title || "Cuộc trò chuyện"}
+        <IconMessage size={16} />
+        {conversation?.title || "Cuộc trò chuyện"}
       </div>
 
       {time ? (
@@ -74,6 +76,7 @@ export default function ConversationItem({
           style={{
             fontSize: "var(--font-xs)",
             color: "var(--color-text-muted)",
+            paddingLeft: 24,
           }}
         >
           {time}
@@ -95,12 +98,11 @@ export default function ConversationItem({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-lg)",
             color: "var(--color-text-secondary)",
             borderRadius: "var(--radius-md)",
           }}
         >
-          ×
+          <IconClose size={18} />
         </button>
       ) : null}
     </div>

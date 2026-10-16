@@ -1,19 +1,12 @@
 // src/pages/delete-account.js
 // Nhiệm vụ: Xóa tài khoản.
-// Quy tắc dự án (PHẦN 04, mục 17):
-//   - Có hậu quả lớn → phải xác nhận rõ ràng
-//   - Phải có cách hủy thao tác
-//   - KHÔNG xóa ngay khi vừa vào trang
-//   - Chỉ thực hiện khi User xác nhận
-//   - Backend phải xác minh quyền
-//   - Chỉ báo thành công khi backend xác nhận
-//   - KHÔNG tự thêm bước/trường mới ngoài đặc tả
 
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../components/HeaderBar.js";
 import { useAuth } from "../store/authStore.js";
 import { useUI } from "../store/uiStore.js";
+import { IconTrash, IconWarning } from "../components/Icons.js";
 
 const CONFIRM_WORD = "XOA";
 
@@ -30,7 +23,6 @@ export default function DeleteAccount() {
 
   const handleDelete = async () => {
     setError("");
-
     if (!password) {
       setError("Vui lòng nhập mật khẩu hiện tại");
       return;
@@ -40,7 +32,6 @@ export default function DeleteAccount() {
       return;
     }
 
-    // Xác nhận lần cuối trước khi gọi backend
     const yes = await confirm({
       title: "Xác nhận xóa tài khoản",
       message:
@@ -87,9 +78,15 @@ export default function DeleteAccount() {
             letterSpacing: "1px",
             color: "var(--color-error)",
             marginBottom: "var(--space-4)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🗑️ XÓA TÀI KHOẢN
+          <IconTrash size={24} />
+          XÓA TÀI KHOẢN
         </h1>
 
         <div
@@ -101,13 +98,18 @@ export default function DeleteAccount() {
             fontSize: "var(--font-sm)",
             color: "var(--color-text-secondary)",
             lineHeight: 1.6,
+            display: "flex",
+            gap: 8,
           }}
         >
-          <strong style={{ color: "var(--color-error)" }}>
-            ⚠ Cảnh báo:
-          </strong>{" "}
-          Hành động này sẽ xóa vĩnh viễn tài khoản, toàn bộ dự án, hội thoại,
-          API key đã lưu và không thể khôi phục.
+          <span style={{ color: "var(--color-error)", flexShrink: 0 }}>
+            <IconWarning size={20} />
+          </span>
+          <span>
+            <strong style={{ color: "var(--color-error)" }}>Cảnh báo:</strong>{" "}
+            Hành động này sẽ xóa vĩnh viễn tài khoản, toàn bộ dự án, hội thoại,
+            API key đã lưu và không thể khôi phục.
+          </span>
         </div>
 
         <div style={{ marginBottom: "var(--space-4)" }}>
@@ -174,7 +176,11 @@ export default function DeleteAccount() {
               marginBottom: "var(--space-2)",
             }}
           >
-            Nhập <strong style={{ color: "var(--color-error)" }}>{CONFIRM_WORD}</strong> để xác nhận
+            Nhập{" "}
+            <strong style={{ color: "var(--color-error)" }}>
+              {CONFIRM_WORD}
+            </strong>{" "}
+            để xác nhận
           </div>
           <input
             type="text"

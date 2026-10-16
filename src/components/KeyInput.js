@@ -1,15 +1,15 @@
 // src/components/KeyInput.js
-// Nhiệm vụ: Ô nhập API Key + nút 👁 hiện/ẩn + nút ▶ Run.
-// Quy tắc dự án:
-//   - Nút ▶ Run nằm NGAY CẠNH ô nhập (không tách rời)
-//   - 👁 để hiện/ẩn nội dung key
-//   - Run kiểm tra key với backend, KHÔNG tự báo thành công
-//   - Khi đang kiểm tra: khóa nút, hiện trạng thái
-//   - Sau khi backend xác nhận mới báo thành công và xóa ô nhập
+// Nhiệm vụ: Ô nhập API Key + nút 👁 + ▶ Run.
+// Giữ icon 👁 (mắt) và ▶ (play) vì đây là icon chức năng chuẩn.
 
 import React, { useState } from "react";
 
-export default function KeyInput({ onRun, running = false, disabled = false, placeholder = "Nhập API Key..." }) {
+export default function KeyInput({
+  onRun,
+  running = false,
+  disabled = false,
+  placeholder = "Nhập API Key...",
+}) {
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -49,7 +49,6 @@ export default function KeyInput({ onRun, running = false, disabled = false, pla
           minHeight: 48,
         }}
       >
-        {/* Ô NHẬP */}
         <input
           type={visible ? "text" : "password"}
           value={value}
@@ -70,7 +69,6 @@ export default function KeyInput({ onRun, running = false, disabled = false, pla
           }}
         />
 
-        {/* 👁 HIỆN / ẨN */}
         <button
           type="button"
           aria-label={visible ? "Ẩn key" : "Hiện key"}
@@ -83,7 +81,6 @@ export default function KeyInput({ onRun, running = false, disabled = false, pla
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-lg)",
             color: "var(--color-text-secondary)",
             borderRadius: "var(--radius-md)",
           }}
@@ -91,7 +88,6 @@ export default function KeyInput({ onRun, running = false, disabled = false, pla
           {visible ? "🙈" : "👁"}
         </button>
 
-        {/* ▶ RUN */}
         <button
           type="button"
           aria-label="Kiểm tra và thêm key"
@@ -104,9 +100,9 @@ export default function KeyInput({ onRun, running = false, disabled = false, pla
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-lg)",
             color: running ? "var(--color-text-muted)" : "var(--color-ai-text)",
             borderRadius: "var(--radius-md)",
+            fontSize: "var(--font-lg)",
           }}
         >
           {running ? "…" : "▶"}

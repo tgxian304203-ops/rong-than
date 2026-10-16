@@ -1,14 +1,5 @@
 // src/pages/logs.js
 // Nhiệm vụ: Rồng Thần Logs.
-// Quy tắc dự án (PHẦN 04, mục 20):
-//   - Điểm vào: nhấn ⋮ ở màn hình chat chính
-//   - Trạng thái server: chỉ hiển thị khi backend cung cấp
-//   - Ô tìm kiếm log
-//   - Bộ lọc mức: Tất cả / INFO / WARN / ERROR / DEBUG
-//   - Danh sách log (cuộn) — log cũ trên, mới dưới
-//   - Tự động cuộn: BẬT/TẮT
-//   - Nút Xóa Logs (không icon thùng rác, phải xác nhận)
-//   - Nút ⬇ Tải Logs (.txt)
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -23,6 +14,7 @@ import {
   downloadLogsTxt,
   streamLogs,
 } from "../api/logs.js";
+import { IconSearch, IconDownload, IconTrash } from "../components/Icons.js";
 
 export default function Logs() {
   const { confirm, showToast } = useUI();
@@ -38,9 +30,6 @@ export default function Logs() {
   const scrollRef = useRef(null);
   const searchDebounceRef = useRef(null);
 
-  // ============================================================
-  // SẮP XẾP — CŨ TRÊN, MỚI DƯỚI
-  // ============================================================
   const sortAsc = (list) => {
     return [...list].sort((a, b) => {
       const ta = new Date(a.timestamp || 0).getTime();
@@ -49,20 +38,12 @@ export default function Logs() {
     });
   };
 
-  // ============================================================
-  // TẢI LOGS
-  // ============================================================
   const load = useCallback(
     async (opts = {}) => {
       setLoading(true);
       setError("");
       try {
-        const res = await fetchLogs({
-          level,
-          search,
-          limit: 300,
-          ...opts,
-        });
+        const res = await fetchLogs({ level, search, limit: 300, ...opts });
         setItems(sortAsc(res?.items || []));
         if (res?.serverStatus) setServerStatus(res.serverStatus);
       } catch (err) {
@@ -75,24 +56,17 @@ export default function Logs() {
     [level, search]
   );
 
-  // ============================================================
-  // TẢI LẦN ĐẦU
-  // ============================================================
   useEffect(() => {
     let cancelled = false;
-
     async function init() {
       try {
         const st = await getServerStatus();
-        if (!cancelled) {
-          setServerStatus(st?.status || "unknown");
-        }
+        if (!cancelled) setServerStatus(st?.status || "unknown");
       } catch {
         if (!cancelled) setServerStatus("offline");
       }
       if (!cancelled) await load();
     }
-
     init();
     return () => {
       cancelled = true;
@@ -100,17 +74,11 @@ export default function Logs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ============================================================
-  // RELOAD KHI ĐỔI LEVEL
-  // ============================================================
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level]);
 
-  // ============================================================
-  // TÌM KIẾM — DEBOUNCE 400ms
-  // ============================================================
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
@@ -122,9 +90,6 @@ export default function Logs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  // ============================================================
-  // SSE — nhận log mới
-  // ============================================================
   useEffect(() => {
     const cancel = streamLogs(
       (item) => {
@@ -132,16 +97,11 @@ export default function Logs() {
         if (level !== "all" && item.level !== level) return;
         setItems((prev) => sortAsc([...prev, item]));
       },
-      () => {
-        /* không có SSE — bỏ qua */
-      }
+      () => {}
     );
     return () => cancel && cancel();
   }, [level]);
 
-  // ============================================================
-  // TỰ ĐỘNG CUỘN — XUỐNG CUỐI KHI CÓ LOG MỚI
-  // ============================================================
   useEffect(() => {
     if (!autoScroll) return;
     const el = scrollRef.current;
@@ -149,9 +109,6 @@ export default function Logs() {
     el.scrollTop = el.scrollHeight;
   }, [items, autoScroll]);
 
-  // ============================================================
-  // XÓA LOGS
-  // ============================================================
   const handleClear = async () => {
     const yes = await confirm({
       title: "Xóa Logs",
@@ -162,7 +119,6 @@ export default function Logs() {
       tone: "danger",
     });
     if (!yes) return;
-
     try {
       await clearLogs();
       setItems([]);
@@ -172,9 +128,6 @@ export default function Logs() {
     }
   };
 
-  // ============================================================
-  // TẢI LOGS (.txt)
-  // ============================================================
   const handleDownload = async () => {
     try {
       const blob = await downloadLogsTxt({ level, search });
@@ -193,19 +146,19 @@ export default function Logs() {
     }
   };
 
-  // ============================================================
-  // TRẠNG THÁI SERVER
-  // ============================================================
-  const statusInfo = (() => {
-    switch (serverStatus) {
-      case "online":
-        return { icon: "🟢", label: "Đang hoạt động", color: "var(--color-success)" };
-      case "offline":
-        return { icon: "🔴", label: "Không kết nối được", color: "var(--color-error)" };
-      default:
-        return { icon: "⚪", label: "Chưa xác định", color: "var(--color-text-muted)" };
-    }
-  })();
+  const statusColor =
+    serverStatus === "online"
+      ? "var(--color-success)"
+      : serverStatus === "offline"
+      ? "var(--color-error)"
+      : "var(--color-text-muted)";
+
+  const statusLabel =
+    serverStatus === "online"
+      ? "Đang hoạt động"
+      : serverStatus === "offline"
+      ? "Không kết nối được"
+      : "Chưa xác định";
 
   return (
     <div
@@ -229,7 +182,6 @@ export default function Logs() {
           overflow: "hidden",
         }}
       >
-        {/* TRẠNG THÁI SERVER */}
         <div
           style={{
             display: "flex",
@@ -240,12 +192,11 @@ export default function Logs() {
           }}
         >
           <span>Trạng thái:</span>
-          <span style={{ color: statusInfo.color, fontWeight: 600 }}>
-            {statusInfo.icon} {statusInfo.label}
+          <span style={{ color: statusColor, fontWeight: 600 }}>
+            {statusLabel}
           </span>
         </div>
 
-        {/* TÌM KIẾM */}
         <div
           className="glass-card"
           style={{
@@ -256,8 +207,14 @@ export default function Logs() {
             padding: "0 var(--space-2)",
           }}
         >
-          <span aria-hidden="true" style={{ textAlign: "center" }}>
-            🔍
+          <span
+            style={{
+              display: "inline-flex",
+              justifyContent: "center",
+              color: "var(--color-text-muted)",
+            }}
+          >
+            <IconSearch size={18} />
           </span>
           <input
             type="text"
@@ -276,12 +233,10 @@ export default function Logs() {
           />
         </div>
 
-        {/* BỘ LỌC MỨC */}
         <div style={{ display: "flex", alignItems: "center" }}>
           <LogFilter value={level} onChange={setLevel} />
         </div>
 
-        {/* DANH SÁCH LOG — CUỘN XUỐNG CUỐI */}
         <div
           ref={scrollRef}
           className="scroll-y"
@@ -295,12 +250,12 @@ export default function Logs() {
           }}
         >
           {loading && items.length === 0 ? (
-            <EmptyState icon="⏳" title="Đang tải log…" />
+            <EmptyState icon="loader" title="Đang tải log…" />
           ) : error ? (
-            <EmptyState icon="⚠" title="Lỗi tải log" subtitle={error} />
+            <EmptyState icon="warning" title="Lỗi tải log" subtitle={error} />
           ) : items.length === 0 ? (
             <EmptyState
-              icon="📭"
+              icon="inbox"
               title="Chưa có log nào"
               subtitle="Log mới sẽ xuất hiện khi có hoạt động."
             />
@@ -309,7 +264,6 @@ export default function Logs() {
           )}
         </div>
 
-        {/* TỰ ĐỘNG CUỘN */}
         <div
           style={{
             display: "flex",
@@ -340,7 +294,6 @@ export default function Logs() {
           </button>
         </div>
 
-        {/* NÚT XÓA LOGS + TẢI LOGS */}
         <div
           style={{
             display: "grid",
@@ -359,8 +312,13 @@ export default function Logs() {
               color: "var(--color-error)",
               fontSize: "var(--font-base)",
               fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
+            <IconTrash size={18} />
             Xóa Logs
           </button>
           <button
@@ -374,9 +332,14 @@ export default function Logs() {
               color: "var(--color-text-primary)",
               fontSize: "var(--font-base)",
               fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
-            ⬇ Tải Logs
+            <IconDownload size={18} />
+            Tải Logs
           </button>
         </div>
       </div>

@@ -1,12 +1,13 @@
 // src/components/HeaderBar.js
 // Nhiệm vụ: Thanh trên cùng cho mọi màn hình.
-// Nền trong suốt 30% (glass-header).
+// Đã thay emoji bằng SVG.
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useUI } from "../store/uiStore.js";
 import HeaderLogoCenter from "./HeaderLogoCenter.js";
 import HeaderLogoRight from "./HeaderLogoRight.js";
+import { IconMenu, IconArrowLeft, IconMoreVertical } from "./Icons.js";
 
 export default function HeaderBar({
   variant = "sub",
@@ -37,20 +38,18 @@ export default function HeaderBar({
         padding: "0 var(--space-2)",
       }}
     >
-      {/* Ô TRÁI */}
       <div style={{ display: "flex", alignItems: "center" }}>
         {variant === "main" ? (
           <IconButton label="Mở menu" onClick={openMenu}>
-            ☰
+            <IconMenu size={22} />
           </IconButton>
         ) : showBack ? (
           <IconButton label="Quay lại" onClick={handleBack}>
-            ←
+            <IconArrowLeft size={22} />
           </IconButton>
         ) : null}
       </div>
 
-      {/* Ô GIỮA */}
       <div
         style={{
           display: "flex",
@@ -79,7 +78,6 @@ export default function HeaderBar({
         ) : null}
       </div>
 
-      {/* Ô PHẢI */}
       <div
         style={{
           display: "flex",
@@ -88,8 +86,11 @@ export default function HeaderBar({
         }}
       >
         {variant === "main" ? (
-          <IconButton label="Rồng Thần Logs" onClick={() => navigate("/logs")}>
-            ⋮
+          <IconButton
+            label="Rồng Thần Logs"
+            onClick={() => navigate("/logs")}
+          >
+            <IconMoreVertical size={22} />
           </IconButton>
         ) : rightSlot ? (
           rightSlot
@@ -101,9 +102,6 @@ export default function HeaderBar({
   );
 }
 
-// ============================================================
-// Nút icon
-// ============================================================
 function IconButton({ children, label, onClick }) {
   return (
     <button
@@ -117,22 +115,8 @@ function IconButton({ children, label, onClick }) {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: "var(--font-xl)",
         color: "var(--color-text-primary)",
         borderRadius: "var(--radius-md)",
-        transition: "background-color var(--duration-fast) var(--ease-out)",
-      }}
-      onTouchStart={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
-      }}
-      onTouchEnd={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.06)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
       }}
     >
       {children}

@@ -1,13 +1,10 @@
 // src/components/KeyRow.js
 // Nhiệm vụ: Một dòng key trong nhóm nhà cung cấp.
-// Quy tắc dự án:
-//   - Hiển thị key đã che (gsk_••••, AIza••••, sk-or-••••)
-//   - 🔥 = còn quota, 😓 = hết quota
-//   - × xóa RIÊNG key đó (không xóa cả nhóm)
-//   - Có xác nhận trước khi xóa
+// GIỮ 🔥 (còn quota) và 😓 (hết quota) — đây là quy tắc giao diện dự án.
 
 import React from "react";
 import { useUI } from "../store/uiStore.js";
+import { IconClose } from "./Icons.js";
 
 export default function KeyRow({ item, onDelete, providerLabel = "" }) {
   const { confirm } = useUI();
@@ -41,7 +38,6 @@ export default function KeyRow({ item, onDelete, providerLabel = "" }) {
         gap: "var(--space-1)",
       }}
     >
-      {/* KEY ĐÃ CHE */}
       <div
         style={{
           fontSize: "var(--font-sm)",
@@ -57,7 +53,6 @@ export default function KeyRow({ item, onDelete, providerLabel = "" }) {
         {item?.maskedKey || "••••"}
       </div>
 
-      {/* QUOTA */}
       <div
         aria-label={quotaLabel}
         title={quotaLabel}
@@ -73,7 +68,6 @@ export default function KeyRow({ item, onDelete, providerLabel = "" }) {
         {quotaIcon}
       </div>
 
-      {/* NÚT × */}
       <button
         type="button"
         aria-label="Xóa key này"
@@ -85,12 +79,11 @@ export default function KeyRow({ item, onDelete, providerLabel = "" }) {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: "var(--font-lg)",
           color: "var(--color-text-secondary)",
           borderRadius: "var(--radius-md)",
         }}
       >
-        ×
+        <IconClose size={18} />
       </button>
     </div>
   );

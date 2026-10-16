@@ -1,11 +1,5 @@
 // src/pages/login.js
 // Nhiệm vụ: Đăng nhập.
-// Quy tắc dự án (PHẦN 04, mục 19):
-//   - 2 trường: ID tài khoản / Mật khẩu
-//   - 👁 hiện/ẩn mật khẩu
-//   - Nút ĐĂNG NHẬP + liên kết Đăng ký
-//   - Xác thực qua backend, KHÔNG báo thành công nếu thất bại
-//   - Đăng nhập thành công → quay về chat chính
 
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
@@ -13,6 +7,7 @@ import HeaderBar from "../components/HeaderBar.js";
 import { useAuth } from "../store/authStore.js";
 import { useUI } from "../store/uiStore.js";
 import { validateUserId } from "../utils/validate.js";
+import { IconEye, IconEyeOff } from "../components/Icons.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -27,7 +22,6 @@ export default function Login() {
 
   const handleSubmit = async () => {
     setError("");
-
     const idCheck = validateUserId(userId);
     if (!idCheck.ok) {
       setError(idCheck.error);
@@ -151,11 +145,10 @@ export default function Login() {
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "var(--font-lg)",
                 color: "var(--color-text-secondary)",
               }}
             >
-              {showPassword ? "🙈" : "👁"}
+              {showPassword ? <IconEyeOff size={20} /> : <IconEye size={20} />}
             </button>
           </div>
         </div>

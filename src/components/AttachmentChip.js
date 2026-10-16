@@ -1,21 +1,15 @@
 // src/components/AttachmentChip.js
 // Nhiệm vụ: Chip hiển thị tệp đính kèm trong vùng nhập.
-// Quy tắc dự án:
-//   - Ảnh: hiển thị hình thu nhỏ
-//   - Tệp thường: hiển thị tên tệp
-//   - Mỗi chip có nút × ở góc trên bên phải
-//   - Nhấn × chỉ xóa tệp tương ứng, không xóa các tệp khác
-//   - Nhiều chip tự xuống hàng khi không đủ rộng
 
 import React, { useEffect, useState } from "react";
 import { getFileIcon, formatFileSize } from "../utils/format.js";
 import { isImageFile } from "../utils/validate.js";
+import { FileTypeIcon, IconClose } from "./Icons.js";
 
 export default function AttachmentChip({ file, onRemove }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const isImage = isImageFile(file);
 
-  // Tạo URL xem trước cho ảnh
   useEffect(() => {
     if (!isImage || !file) return;
     const url = URL.createObjectURL(file);
@@ -27,6 +21,7 @@ export default function AttachmentChip({ file, onRemove }) {
 
   const name = file?.name || "tệp";
   const size = typeof file?.size === "number" ? formatFileSize(file.size) : "";
+  const iconType = getFileIcon(name);
 
   return (
     <div
@@ -43,7 +38,6 @@ export default function AttachmentChip({ file, onRemove }) {
       }}
       title={name}
     >
-      {/* Nút × */}
       <button
         type="button"
         aria-label={`Xóa ${name}`}
@@ -58,18 +52,15 @@ export default function AttachmentChip({ file, onRemove }) {
           borderRadius: "var(--radius-full)",
           backgroundColor: "rgba(0,0,0,0.65)",
           color: "var(--color-text-primary)",
-          fontSize: "var(--font-sm)",
-          lineHeight: 1,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           zIndex: 2,
         }}
       >
-        ×
+        <IconClose size={14} />
       </button>
 
-      {/* Hình xem trước hoặc icon */}
       <div
         style={{
           width: "100%",
@@ -80,7 +71,7 @@ export default function AttachmentChip({ file, onRemove }) {
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: "rgba(255,255,255,0.05)",
-          fontSize: 22,
+          color: "var(--color-text-secondary)",
         }}
       >
         {isImage && previewUrl ? (
@@ -90,11 +81,10 @@ export default function AttachmentChip({ file, onRemove }) {
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (
-          <span aria-hidden="true">{getFileIcon(name)}</span>
+          <FileTypeIcon type={iconType} size={22} />
         )}
       </div>
 
-      {/* Tên tệp + kích thước */}
       <div
         style={{
           fontSize: "var(--font-xs)",

@@ -1,13 +1,5 @@
 // src/pages/web.js
 // Nhiệm vụ: Trang quản lý API Key cho Web.
-// Quy tắc dự án (PHẦN 04, mục 13):
-//   - 3 nhà cung cấp: TAVILY / SERPJET / BRAVE SEARCH
-//   - Ô nhập + 👁 + ▶ Run
-//   - 🔥 / 😓, × xóa riêng key
-//   - Mỗi nhóm cuộn dọc RIÊNG
-//   - Dữ liệu Web ĐỘC LẬP với Đại Não và Tiểu Não
-//   - KHÔNG có nút Lưu Key / Xóa Key riêng
-//   - KHÔNG tự đổi tên SerpJet thành nhà cung cấp khác
 
 import React, { useCallback, useEffect, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -15,6 +7,7 @@ import KeyInput from "../components/KeyInput.js";
 import ProviderGroup from "../components/ProviderGroup.js";
 import { useUI } from "../store/uiStore.js";
 import { webKeys } from "../api/keys.js";
+import { IconGlobe } from "../components/Icons.js";
 
 export default function WebPage() {
   const { showToast } = useUI();
@@ -102,9 +95,15 @@ export default function WebPage() {
             letterSpacing: "1px",
             color: "var(--color-text-primary)",
             marginBottom: "var(--space-4)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🌐 WEB
+          <IconGlobe size={24} />
+          WEB
         </h1>
 
         <div style={{ marginBottom: "var(--space-5)" }}>

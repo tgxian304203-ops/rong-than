@@ -1,12 +1,10 @@
 // src/pages/paste-key.js
 // Nhiệm vụ: Trang chọn loại key.
-// Quy tắc dự án (PHẦN 04, mục 10):
-//   - CHỈ CÓ 3 nút: 🧠 Đại Não, 🧠 Tiểu Não, 🌐 Web
-//   - Điều hướng tới trang quản lý key tương ứng
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../components/HeaderBar.js";
+import { IconBrain, IconGlobe } from "../components/Icons.js";
 
 export default function PasteKey() {
   const navigate = useNavigate();
@@ -45,17 +43,17 @@ export default function PasteKey() {
           }}
         >
           <BigButton
-            icon="🧠"
+            icon={<IconBrain size={24} />}
             label="Đại Não"
             onClick={() => navigate("/paste-key/dai-nao")}
           />
           <BigButton
-            icon="🧠"
+            icon={<IconBrain size={24} />}
             label="Tiểu Não"
             onClick={() => navigate("/paste-key/tieu-nao")}
           />
           <BigButton
-            icon="🌐"
+            icon={<IconGlobe size={24} />}
             label="Web"
             onClick={() => navigate("/paste-key/web")}
           />
@@ -83,7 +81,15 @@ function BigButton({ icon, label, onClick }) {
         textAlign: "left",
       }}
     >
-      <span aria-hidden="true" style={{ fontSize: "var(--font-xl)", width: 28 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 28,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         {icon}
       </span>
       <span>{label}</span>

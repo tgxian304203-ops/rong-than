@@ -1,16 +1,5 @@
 // src/pages/project-detail.js
 // Nhiệm vụ: Bên trong dự án.
-// Quy tắc dự án (PHẦN 04, mục 7):
-//   - Nút ← Dự án quay lại danh sách dự án
-//   - Nút ⋮ bên phải (chức năng gán khi đã xác định rõ)
-//   - Tên dự án
-//   - Mục Cuộc trò chuyện + nút ＋ Cuộc trò chuyện mới
-//   - Mục Lịch sử trong dự án (các cuộc trò chuyện)
-//   - Mỗi cuộc trò chuyện có × xóa (phải xác nhận)
-//
-// QUY TẮC BẮT BUỘC:
-//   - MÀN HÌNH NÀY KHÔNG CÓ Ô NHẬP CHAT Ở DƯỚI CÙNG
-//   - Phải mở 1 cuộc trò chuyện để vào giao diện chat
 
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -20,6 +9,7 @@ import EmptyState from "../components/EmptyState.js";
 import { useProject } from "../store/projectStore.js";
 import { useChat } from "../store/chatStore.js";
 import { useUI } from "../store/uiStore.js";
+import { IconPlus, IconMessage, IconHistory } from "../components/Icons.js";
 
 export default function ProjectDetail() {
   const { projectId } = useParams();
@@ -44,11 +34,8 @@ export default function ProjectDetail() {
 
   const handleOpenConversation = async (convo) => {
     const res = await openConversation(convo.id);
-    if (res?.ok) {
-      navigate("/");
-    } else {
-      showToast(res?.error || "Không mở được cuộc trò chuyện", "error", 4000);
-    }
+    if (res?.ok) navigate("/");
+    else showToast(res?.error || "Không mở được cuộc trò chuyện", "error", 4000);
   };
 
   const handleCreateConversation = async () => {
@@ -84,7 +71,6 @@ export default function ProjectDetail() {
       <HeaderBar variant="sub" title="Dự án" />
 
       <div className="scroll-y" style={{ flex: 1, padding: "var(--space-4)" }}>
-        {/* TÊN DỰ ÁN */}
         <div
           style={{
             fontSize: "var(--font-lg)",
@@ -96,10 +82,9 @@ export default function ProjectDetail() {
             gap: "var(--space-2)",
           }}
         >
-          📁 {activeProject?.name || "Đang tải…"}
+          {activeProject?.name || "Đang tải…"}
         </div>
 
-        {/* MỤC CUỘC TRÒ CHUYỆN */}
         <h2
           style={{
             fontSize: "var(--font-sm)",
@@ -108,9 +93,13 @@ export default function ProjectDetail() {
             color: "var(--color-text-secondary)",
             textTransform: "uppercase",
             marginBottom: "var(--space-2)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          💬 Cuộc trò chuyện
+          <IconMessage size={16} />
+          Cuộc trò chuyện
         </h2>
 
         <button
@@ -133,10 +122,10 @@ export default function ProjectDetail() {
             marginBottom: "var(--space-5)",
           }}
         >
-          ＋ {creating ? "Đang tạo…" : "Cuộc trò chuyện mới"}
+          <IconPlus size={20} />
+          {creating ? "Đang tạo…" : "Cuộc trò chuyện mới"}
         </button>
 
-        {/* MỤC LỊCH SỬ TRONG DỰ ÁN */}
         <h2
           style={{
             fontSize: "var(--font-sm)",
@@ -145,20 +134,24 @@ export default function ProjectDetail() {
             color: "var(--color-text-secondary)",
             textTransform: "uppercase",
             marginBottom: "var(--space-2)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          🕘 Lịch sử trong dự án
+          <IconHistory size={16} />
+          Lịch sử trong dự án
         </h2>
 
         {loading ? (
-          <EmptyState icon="⏳" title="Đang tải…" />
+          <EmptyState icon="loader" title="Đang tải…" />
         ) : error ? (
-          <EmptyState icon="⚠" title="Lỗi tải dự án" subtitle={error} />
+          <EmptyState icon="warning" title="Lỗi tải dự án" subtitle={error} />
         ) : projectConversations.length === 0 ? (
           <EmptyState
-            icon="💬"
+            icon="message"
             title="Chưa có cuộc trò chuyện nào"
-            subtitle="Nhấn ＋ Cuộc trò chuyện mới để bắt đầu"
+            subtitle="Nhấn + Cuộc trò chuyện mới để bắt đầu"
           />
         ) : (
           <div

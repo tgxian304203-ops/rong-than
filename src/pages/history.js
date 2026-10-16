@@ -1,8 +1,5 @@
 // src/pages/history.js
 // Nhiệm vụ: Lịch sử trò chuyện.
-// - Hiển thị TẤT CẢ hội thoại không thuộc dự án
-// - Hội thoại trong dự án KHÔNG hiện ở đây
-// - Có nút "Xóa tất cả" dưới danh sách
 
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -11,6 +8,7 @@ import ConversationItem from "../components/ConversationItem.js";
 import EmptyState from "../components/EmptyState.js";
 import { useChat } from "../store/chatStore.js";
 import { useUI } from "../store/uiStore.js";
+import { IconTrash } from "../components/Icons.js";
 
 export default function History() {
   const navigate = useNavigate();
@@ -44,7 +42,6 @@ export default function History() {
       showToast("Không có cuộc trò chuyện nào để xóa", "info", 2000);
       return;
     }
-
     const yes = await confirm({
       title: "Xóa tất cả lịch sử",
       message: `Bạn có chắc muốn xóa TẤT CẢ ${recentConversations.length} cuộc trò chuyện trong lịch sử? Hành động này không thể hoàn tác.`,
@@ -76,12 +73,12 @@ export default function History() {
         overflow: "hidden",
       }}
     >
-      <HeaderBar variant="sub" title="🕘 Lịch sử trò chuyện" />
+      <HeaderBar variant="sub" title="Lịch sử trò chuyện" />
 
       <div className="scroll-y" style={{ flex: 1, padding: "var(--space-4)" }}>
         {recentConversations.length === 0 ? (
           <EmptyState
-            icon="🕘"
+            icon="history"
             title="Chưa có cuộc trò chuyện nào"
             subtitle="Các cuộc trò chuyện gần đây sẽ xuất hiện ở đây."
           />
@@ -119,9 +116,14 @@ export default function History() {
               fontSize: "var(--font-base)",
               fontWeight: 700,
               backgroundColor: "rgba(239, 68, 68, 0.08)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
             }}
           >
-            🗑 Xóa tất cả lịch sử
+            <IconTrash size={20} />
+            Xóa tất cả lịch sử
           </button>
         ) : null}
 

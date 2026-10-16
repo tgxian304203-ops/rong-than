@@ -1,13 +1,12 @@
 // src/components/MessageBubble.js
 // Nhiệm vụ: Khung tin nhắn AI hoặc User.
-// - Tách code block ``` để hiển thị riêng
-// - Code block có nút Copy + Sandbox LiveCodes (chỉ AI)
-// - Ảnh có thể bấm vào để xem full-size
+// GIỮ 🔥🐉 và 👾 (label). Đã thay 🔧 → IconWrench, ✓ → IconCheck.
 
 import React, { useState } from "react";
 import { formatTime, getFileIcon, formatFileSize } from "../utils/format.js";
 import { isImageFile } from "../utils/validate.js";
 import SandboxEmbed from "./SandboxEmbed.js";
+import { IconWrench, IconCopy, IconCheck, FileTypeIcon } from "./Icons.js";
 
 export default function MessageBubble({ message }) {
   const isAI = message.role === "ai";
@@ -36,7 +35,6 @@ export default function MessageBubble({ message }) {
           maxWidth: "100%",
         }}
       >
-        {/* NHÃN */}
         <div
           style={{
             fontSize: "var(--font-xs)",
@@ -61,7 +59,6 @@ export default function MessageBubble({ message }) {
           ) : null}
         </div>
 
-        {/* KHUNG TIN NHẮN */}
         <div
           className={`glass-bubble ${
             isAI ? "glass-bubble-ai" : "glass-bubble-user"
@@ -72,7 +69,6 @@ export default function MessageBubble({ message }) {
             position: "relative",
           }}
         >
-          {/* TỆP ĐÍNH KÈM */}
           {attachments.length > 0 ? (
             <div
               style={{
@@ -93,7 +89,6 @@ export default function MessageBubble({ message }) {
             </div>
           ) : null}
 
-          {/* NỘI DUNG */}
           {parts.map((part, idx) => {
             if (part.type === "code") {
               return (
@@ -129,7 +124,6 @@ export default function MessageBubble({ message }) {
             return null;
           })}
 
-          {/* TRẠNG THÁI */}
           {message.pending ? (
             <div
               style={{
@@ -155,7 +149,6 @@ export default function MessageBubble({ message }) {
         </div>
       </div>
 
-      {/* LIGHTBOX ẢNH */}
       {lightboxSrc ? (
         <div
           role="dialog"
@@ -234,11 +227,9 @@ function splitTextAndCode(text) {
         parts.push({ type: "text", content: textPart });
       }
     }
-
     const language = (match[1] || "").trim();
     const code = match[2] || "";
     parts.push({ type: "code", language, content: code });
-
     lastIndex = match.index + match[0].length;
   }
 
@@ -252,7 +243,6 @@ function splitTextAndCode(text) {
   if (parts.length === 0) {
     parts.push({ type: "text", content: text });
   }
-
   return parts;
 }
 
@@ -316,9 +306,22 @@ function CodeBlock({ language, code }) {
             padding: "2px 8px",
             borderRadius: 4,
             backgroundColor: "rgba(255,255,255,0.08)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {copied ? "✓ Đã copy" : "Copy"}
+          {copied ? (
+            <>
+              <IconCheck size={12} />
+              Đã copy
+            </>
+          ) : (
+            <>
+              <IconCopy size={12} />
+              Copy
+            </>
+          )}
         </button>
       </div>
       <pre
@@ -354,6 +357,7 @@ function AttachmentPreview({ attachment, isAI, onOpenImage }) {
   const isImage = type ? isImageFile({ type, name }) : isImageFile({ name });
 
   const src = url || dataUrl || null;
+  const iconType = getFileIcon(name);
 
   if (isImage && src) {
     return (
@@ -402,8 +406,13 @@ function AttachmentPreview({ attachment, isAI, onOpenImage }) {
       }}
       title={name}
     >
-      <span aria-hidden="true" style={{ fontSize: 18 }}>
-        {getFileIcon(name)}
+      <span
+        aria-hidden="true"
+        style={{
+          color: isAI ? "var(--color-ai-text)" : "var(--color-text-primary)",
+        }}
+      >
+        <FileTypeIcon type={iconType} size={18} />
       </span>
       <div style={{ minWidth: 0 }}>
         <div

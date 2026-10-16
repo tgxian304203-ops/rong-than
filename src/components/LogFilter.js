@@ -1,9 +1,5 @@
 // src/components/LogFilter.js
 // Nhiệm vụ: Bộ lọc mức log cho Rồng Thần Logs.
-// Quy tắc dự án:
-//   - Các mức: Tất cả / INFO / WARN / ERROR / DEBUG
-//   - Chọn mức nào thì hiển thị log mức đó
-//   - Tất cả hiển thị toàn bộ mức có sẵn
 
 import React from "react";
 

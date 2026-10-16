@@ -1,24 +1,22 @@
 // src/components/AttachMenu.js
-// Nhiệm vụ: Menu nhỏ mở ra khi nhấn nút ＋ trong thanh nhập.
-// Quy tắc dự án:
-//   - 3 mục: 📷 Chụp ảnh / 🖼 Thêm ảnh / 📎 Thêm file
-//   - Chụp ảnh mở camera thiết bị
-//   - Thêm ảnh mở thư viện ảnh
-//   - Thêm file mở trình chọn tệp
-//   - Nhấn ra ngoài để đóng
+// Nhiệm vụ: Menu nhỏ mở ra khi nhấn nút + trong thanh nhập.
 
 import React, { useEffect, useRef } from "react";
+import { IconCamera, IconImage, IconPaperclip } from "./Icons.js";
 
-export default function AttachMenu({ open, onClose, onPickFiles, onPickImages, onPickCamera }) {
+export default function AttachMenu({
+  open,
+  onClose,
+  onPickFiles,
+  onPickImages,
+  onPickCamera,
+}) {
   const ref = useRef(null);
 
-  // Đóng khi nhấn ra ngoài
   useEffect(() => {
     if (!open) return;
     function handleClick(e) {
-      if (ref.current && !ref.current.contains(e.target)) {
-        onClose?.();
-      }
+      if (ref.current && !ref.current.contains(e.target)) onClose?.();
     }
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("touchstart", handleClick);
@@ -46,9 +44,9 @@ export default function AttachMenu({ open, onClose, onPickFiles, onPickImages, o
         animation: "attach-fade-in var(--duration-fast) var(--ease-out)",
       }}
     >
-      <MenuItem icon="📷" label="Chụp ảnh" onClick={onPickCamera} />
-      <MenuItem icon="🖼" label="Thêm ảnh" onClick={onPickImages} />
-      <MenuItem icon="📎" label="Thêm file" onClick={onPickFiles} />
+      <MenuItem icon={<IconCamera size={20} />} label="Chụp ảnh" onClick={onPickCamera} />
+      <MenuItem icon={<IconImage size={20} />} label="Thêm ảnh" onClick={onPickImages} />
+      <MenuItem icon={<IconPaperclip size={20} />} label="Thêm file" onClick={onPickFiles} />
 
       <style>{`
         @keyframes attach-fade-in {
@@ -79,14 +77,16 @@ function MenuItem({ icon, label, onClick }) {
         fontSize: "var(--font-base)",
         textAlign: "left",
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.06)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "transparent";
-      }}
     >
-      <span aria-hidden="true" style={{ width: 22, textAlign: "center" }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 22,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         {icon}
       </span>
       <span>{label}</span>

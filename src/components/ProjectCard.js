@@ -1,13 +1,9 @@
 // src/components/ProjectCard.js
 // Nhiệm vụ: Thẻ dự án trong danh sách dự án.
-// Quy tắc dự án:
-//   - Hiển thị tên dự án + mô tả (nếu có)
-//   - Nút × ở góc trên phải → yêu cầu xác nhận xóa
-//   - Nhấn vào phần nội dung thẻ → mở dự án
-//   - Nút × tách biệt khỏi vùng nhấn mở dự án
 
 import React from "react";
 import { useUI } from "../store/uiStore.js";
+import { IconFolder, IconClose } from "./Icons.js";
 
 export default function ProjectCard({ project, onOpen, onDelete }) {
   const { confirm } = useUI();
@@ -55,10 +51,14 @@ export default function ProjectCard({ project, onOpen, onDelete }) {
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
         }}
         title={project?.name || ""}
       >
-        📁 {project?.name || "(không tên)"}
+        <IconFolder size={18} />
+        {project?.name || "(không tên)"}
       </div>
 
       {project?.description ? (
@@ -67,6 +67,7 @@ export default function ProjectCard({ project, onOpen, onDelete }) {
             fontSize: "var(--font-sm)",
             color: "var(--color-text-secondary)",
             paddingRight: 36,
+            paddingLeft: 26,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -77,7 +78,6 @@ export default function ProjectCard({ project, onOpen, onDelete }) {
         </div>
       ) : null}
 
-      {/* NÚT × GÓC TRÊN PHẢI */}
       <button
         type="button"
         aria-label="Xóa dự án"
@@ -92,12 +92,11 @@ export default function ProjectCard({ project, onOpen, onDelete }) {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: "var(--font-lg)",
           color: "var(--color-text-secondary)",
           borderRadius: "var(--radius-md)",
         }}
       >
-        ×
+        <IconClose size={18} />
       </button>
     </div>
   );

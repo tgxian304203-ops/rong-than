@@ -1,10 +1,49 @@
 // src/components/EmptyState.js
 // Nhiệm vụ: Trạng thái trống dùng chung.
-// Được MessageList import để hiển thị khi chưa có tin nhắn.
+// Hỗ trợ cả emoji (string) và SVG (React node).
 
 import React from "react";
+import {
+  IconHistory,
+  IconInbox,
+  IconLoader,
+  IconWarning,
+  IconFolder,
+  IconMessage,
+  IconCheckCircle,
+} from "./Icons.js";
 
-export default function EmptyState({ icon = "🌕🐉", title = "", subtitle = "", action = null }) {
+// Map tên icon string → component SVG
+const ICON_MAP = {
+  history: IconHistory,
+  inbox: IconInbox,
+  loader: IconLoader,
+  warning: IconWarning,
+  folder: IconFolder,
+  message: IconMessage,
+  check: IconCheckCircle,
+};
+
+export default function EmptyState({
+  icon = "🌕🐉",
+  title = "",
+  subtitle = "",
+  action = null,
+}) {
+  let renderedIcon = null;
+
+  // Nếu icon là string và có trong map → dùng SVG
+  if (typeof icon === "string" && ICON_MAP[icon]) {
+    const IconComp = ICON_MAP[icon];
+    renderedIcon = <IconComp size={48} />;
+  } else if (typeof icon === "string") {
+    // String thường (emoji) → render text
+    renderedIcon = <span style={{ fontSize: 48, lineHeight: 1 }}>{icon}</span>;
+  } else {
+    // React node (đã là SVG) → dùng trực tiếp
+    renderedIcon = icon;
+  }
+
   return (
     <div
       style={{
@@ -18,16 +57,18 @@ export default function EmptyState({ icon = "🌕🐉", title = "", subtitle = "
         gap: "var(--space-3)",
       }}
     >
-      {icon ? (
+      {renderedIcon ? (
         <div
           aria-hidden="true"
           style={{
-            fontSize: 48,
-            lineHeight: 1,
+            color: "var(--color-text-muted)",
             userSelect: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          {icon}
+          {renderedIcon}
         </div>
       ) : null}
 
@@ -56,7 +97,9 @@ export default function EmptyState({ icon = "🌕🐉", title = "", subtitle = "
         </div>
       ) : null}
 
-      {action ? <div style={{ marginTop: "var(--space-2)" }}>{action}</div> : null}
+      {action ? (
+        <div style={{ marginTop: "var(--space-2)" }}>{action}</div>
+      ) : null}
     </div>
   );
 }

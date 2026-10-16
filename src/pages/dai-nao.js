@@ -1,13 +1,5 @@
 // src/pages/dai-nao.js
 // Nhiệm vụ: Trang quản lý API Key của Đại Não.
-// Quy tắc dự án (PHẦN 04, mục 11):
-//   - Ô nhập key + 👁 + ▶ Run (dùng KeyInput)
-//   - 3 nhóm: GROQ / GEMINI / OPENROUTER
-//   - 🔥 còn quota, 😓 hết quota
-//   - × xóa riêng key
-//   - Mỗi nhóm cuộn dọc RIÊNG
-//   - KHÔNG có nút Lưu Key / Xóa Key riêng
-//   - Dữ liệu key Đại Não độc lập với Tiểu Não và Web
 
 import React, { useCallback, useEffect, useState } from "react";
 import HeaderBar from "../components/HeaderBar.js";
@@ -15,6 +7,7 @@ import KeyInput from "../components/KeyInput.js";
 import ProviderGroup from "../components/ProviderGroup.js";
 import { useUI } from "../store/uiStore.js";
 import { daiNaoKeys } from "../api/keys.js";
+import { IconBrain } from "../components/Icons.js";
 
 export default function DaiNao() {
   const { showToast } = useUI();
@@ -22,9 +15,6 @@ export default function DaiNao() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
 
-  // ============================================================
-  // TẢI DANH SÁCH KEY
-  // ============================================================
   const loadKeys = useCallback(async () => {
     setLoading(true);
     try {
@@ -45,9 +35,6 @@ export default function DaiNao() {
     loadKeys();
   }, [loadKeys]);
 
-  // ============================================================
-  // RUN — kiểm tra và thêm key
-  // ============================================================
   const handleRun = async (rawKey) => {
     setRunning(true);
     try {
@@ -73,9 +60,6 @@ export default function DaiNao() {
     }
   };
 
-  // ============================================================
-  // XÓA 1 KEY
-  // ============================================================
   const handleDeleteKey = async (item) => {
     try {
       await daiNaoKeys.remove(item.id);
@@ -111,9 +95,15 @@ export default function DaiNao() {
             letterSpacing: "1px",
             color: "var(--color-text-primary)",
             marginBottom: "var(--space-4)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🧠 ĐẠI NÃO
+          <IconBrain size={24} />
+          ĐẠI NÃO
         </h1>
 
         <div style={{ marginBottom: "var(--space-5)" }}>

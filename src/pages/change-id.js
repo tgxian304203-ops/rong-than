@@ -1,12 +1,5 @@
 // src/pages/change-id.js
 // Nhiệm vụ: Đổi ID tài khoản.
-// Quy tắc dự án (PHẦN 04, mục 15):
-//   - Hiển thị ID hiện tại
-//   - Ô nhập ID mới
-//   - Nút Xác nhận
-//   - Kiểm tra định dạng ID mới
-//   - Chỉ cập nhật khi backend xác nhận thành công
-//   - Thất bại → giữ nguyên ID hiện tại, báo lỗi
 
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -14,6 +7,7 @@ import HeaderBar from "../components/HeaderBar.js";
 import { useAuth } from "../store/authStore.js";
 import { useUI } from "../store/uiStore.js";
 import { validateUserId } from "../utils/validate.js";
+import { IconIdCard } from "../components/Icons.js";
 
 export default function ChangeId() {
   const navigate = useNavigate();
@@ -28,7 +22,6 @@ export default function ChangeId() {
 
   const handleSubmit = async () => {
     setError("");
-
     const idCheck = validateUserId(newId);
     if (!idCheck.ok) {
       setError(idCheck.error);
@@ -77,9 +70,15 @@ export default function ChangeId() {
             letterSpacing: "1px",
             color: "var(--color-text-primary)",
             marginBottom: "var(--space-5)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
           }}
         >
-          🪪 ĐỔI ID TÀI KHOẢN
+          <IconIdCard size={24} />
+          ĐỔI ID TÀI KHOẢN
         </h1>
 
         <Field label="ID hiện tại">

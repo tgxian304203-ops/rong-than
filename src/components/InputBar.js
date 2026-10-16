@@ -1,28 +1,18 @@
 // src/components/InputBar.js
 // Nhiệm vụ: Thanh nhập tin nhắn + tệp đính kèm.
-//
-// QUY TẮC PHẦN 04, mục 2.G:
-//   - Thanh nhập cách bàn phím 1mm (~4px).
-//
-// Phân biệt Android và iPhone:
-//   - Android: layout co lại khi bàn phím mở → dùng paddingBottom: 4px.
-//   - iPhone: layout KHÔNG co → dùng transform translateY + visualViewport.
+// Đã thay ＋ và ➤ bằng SVG.
 
 import React, { useEffect, useRef, useState } from "react";
 import AttachMenu from "./AttachMenu.js";
 import AttachmentChip from "./AttachmentChip.js";
 import { isBlankMessage } from "../utils/validate.js";
+import { IconPlus, IconSend } from "./Icons.js";
 
 const MAX_LINES = 6;
 const LINE_HEIGHT = 22;
 const PADDING_Y = 22;
-
-// 1mm ≈ 3.78px → dùng 4px
 const KEYBOARD_GAP_PX = 4;
 
-// ============================================================
-// DETECT IPHONE / IPAD
-// ============================================================
 function isIOS() {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
@@ -45,18 +35,13 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   const iOS = isIOS();
 
-  // ============================================================
-  // DETECT BÀN PHÍM — CHỈ CẦN CHO IPHONE
-  // ============================================================
   useEffect(() => {
-    if (!iOS) return; // Android không cần
-
+    if (!iOS) return;
     if (typeof window === "undefined") return;
     const vv = window.visualViewport;
     if (!vv) return;
 
     const update = () => {
-      // Chiều cao bàn phím = chênh lệch giữa innerHeight và visualViewport
       const gap = window.innerHeight - (vv.height + vv.offsetTop);
       setKeyboardOffset(gap > 0 ? gap : 0);
     };
@@ -73,9 +58,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
     };
   }, [iOS]);
 
-  // ============================================================
-  // ĐIỀU CHỈNH CHIỀU CAO TEXTAREA
-  // ============================================================
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -86,9 +68,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [text]);
 
-  // ============================================================
-  // GỬI
-  // ============================================================
   const handleSend = async () => {
     if (sending || disabled) return;
     if (isBlankMessage(text, attachments)) return;
@@ -112,9 +91,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
     }
   };
 
-  // ============================================================
-  // CHỌN TỆP
-  // ============================================================
   const addFiles = (files) => {
     if (!files || files.length === 0) return;
     const arr = Array.from(files);
@@ -132,16 +108,8 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
 
   const canSend = !isBlankMessage(text, attachments) && !sending && !disabled;
 
-  // ============================================================
-  // TÍNH TOÁN STYLE
-  // ============================================================
-  // iPhone: dùng transform translateY để đẩy lên đúng khoảng bàn phím
-  //   + padding bottom 4px (1mm)
-  // Android: giữ nguyên — layout tự co → chỉ cần padding bottom 4px
   const iosTranslateY =
-    iOS && keyboardOffset > 0
-      ? -(keyboardOffset + KEYBOARD_GAP_PX)
-      : 0;
+    iOS && keyboardOffset > 0 ? -(keyboardOffset + KEYBOARD_GAP_PX) : 0;
 
   return (
     <div
@@ -149,7 +117,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         position: "relative",
         transform: iOS ? `translateY(${iosTranslateY}px)` : "none",
         transition: iOS ? "transform 0.15s ease-out" : "none",
-        // Padding bottom = 4px (1mm) — cho cả 2 nền tảng
         paddingBottom: `${KEYBOARD_GAP_PX}px`,
         paddingLeft: "var(--space-2)",
         paddingRight: "var(--space-2)",
@@ -158,7 +125,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         zIndex: 20,
       }}
     >
-      {/* INPUT ẨN */}
       <input
         ref={fileInputRef}
         type="file"
@@ -192,7 +158,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         }}
       />
 
-      {/* TỆP ĐÍNH KÈM */}
       {attachments.length > 0 ? (
         <div
           className="scroll-y"
@@ -214,7 +179,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
         </div>
       ) : null}
 
-      {/* Ô INPUT */}
       <div
         className="glass-inputbar"
         style={{
@@ -226,7 +190,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
           padding: "var(--space-1)",
         }}
       >
-        {/* NÚT ＋ */}
         <button
           type="button"
           aria-label="Thêm tệp đính kèm"
@@ -239,12 +202,11 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-xl)",
             color: "var(--color-text-primary)",
             borderRadius: "var(--radius-md)",
           }}
         >
-          ＋
+          <IconPlus size={22} />
         </button>
 
         <AttachMenu
@@ -255,7 +217,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
           onPickCamera={handlePickCamera}
         />
 
-        {/* TEXTAREA */}
         <textarea
           ref={textareaRef}
           value={text}
@@ -278,7 +239,6 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
           }}
         />
 
-        {/* NÚT GỬI */}
         <button
           type="button"
           aria-label="Gửi tin nhắn"
@@ -291,12 +251,11 @@ export default function InputBar({ onSend, sending = false, disabled = false }) 
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "var(--font-lg)",
             borderRadius: "var(--radius-md)",
             color: canSend ? "var(--color-ai-text)" : "var(--color-text-muted)",
           }}
         >
-          {sending ? "…" : "➤"}
+          {sending ? "…" : <IconSend size={20} />}
         </button>
       </div>
     </div>
