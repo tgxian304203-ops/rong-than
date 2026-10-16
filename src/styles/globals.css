@@ -1,7 +1,7 @@
 /* src/styles/globals.css
-   Nhiệm vụ: Reset + nền tảng toàn cục
-   Đảm bảo hiển thị đúng trên Android, iPhone, dọc/ngang.
+   Nhiệm vụ: Reset + nền tảng toàn cục.
    Tắt hoàn toàn tap highlight khi nhấn nút.
+   Body trong suốt để thấy ảnh nền rồng.
 */
 
 * {
@@ -27,14 +27,18 @@ body {
   font-size: 15px;
   line-height: 1.5;
   color: var(--color-text-primary);
-  background-color: var(--color-bg-base);
+  background-color: #0a0a0a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
+#root {
+  background-color: transparent;
+}
+
 /* ============================================================
-   TẮT TAP HIGHLIGHT — MOBILE
+   TẮT TAP HIGHLIGHT
    ============================================================ */
 
 button,
@@ -64,7 +68,6 @@ a:focus,
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Giữ nguyên nền khi nhấn cho glass-card + glass-inputbar */
 .glass-card:active,
 .glass-card:hover,
 .glass-card:focus {
@@ -80,7 +83,7 @@ a:focus,
 }
 
 /* ============================================================
-   CÁC STYLE CŨ
+   STYLE CŨ
    ============================================================ */
 
 button,
@@ -120,7 +123,6 @@ img {
   display: block;
 }
 
-/* Cuộn mượt */
 .scroll-y {
   overflow-y: auto;
   overflow-x: hidden;
@@ -142,7 +144,6 @@ img {
   border-radius: 2px;
 }
 
-/* Vùng an toàn cho iPhone */
 .safe-top {
   padding-top: env(safe-area-inset-top, 0);
 }
