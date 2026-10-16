@@ -1,13 +1,13 @@
 /* src/styles/glass.css
    Nhiệm vụ: Hiệu ứng kính trong suốt cho khung tin nhắn, menu, dialog.
-   Quy tắc giao diện dự án:
-     - Khung tin nhắn: trong suốt ~50%
-     - Menu chính: trong suốt 0%
-     - HeaderBar: trong suốt 0%
-     - Card / nút / ô nhập: kính trong suốt 10% + viền
+   Quy tắc:
+     - Tin nhắn: trong suốt ~50%
+     - Menu + Header: trong suốt 0%
+     - Card / nút / ô nhập: kính 10%
+     - KHI NHẤN: giữ nguyên nền, KHÔNG có highlight xám
 */
 
-/* ===== KHUNG TIN NHẮN GLASS (nền trong suốt ~50%) ===== */
+/* ===== KHUNG TIN NHẮN ===== */
 .glass-bubble {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -19,29 +19,27 @@
   white-space: pre-wrap;
 }
 
-/* Tin AI */
 .glass-bubble-ai {
   background-color: var(--color-ai-bg);
   color: var(--color-ai-text);
 }
 
-/* Tin User */
 .glass-bubble-user {
   background-color: var(--color-user-bg);
   color: var(--color-user-text);
 }
 
-/* ===== MENU PHỦ TOÀN MÀN HÌNH — TRONG SUỐT 0% ===== */
+/* ===== MENU — TRONG SUỐT 0% ===== */
 .glass-menu {
   background-color: transparent;
 }
 
-/* ===== HEADER BAR — TRONG SUỐT 0% ===== */
+/* ===== HEADER — TRONG SUỐT 0% ===== */
 .glass-header {
   background-color: transparent;
 }
 
-/* ===== DIALOG XÁC NHẬN ===== */
+/* ===== DIALOG ===== */
 .glass-dialog {
   background-color: rgba(20, 20, 20, 0.92);
   backdrop-filter: blur(20px);
@@ -51,22 +49,67 @@
   box-shadow: var(--shadow-lg);
 }
 
-/* ===== Ô NHẬP / THANH NHẬP — KÍNH 10% ===== */
+/* ===== Ô NHẬP — KÍNH 10% ===== */
 .glass-inputbar {
   background-color: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border-radius: var(--radius-lg);
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* ===== CARD / NÚT — KÍNH 10% + VIỀN ===== */
+/* ===== CARD / NÚT — KÍNH 10% ===== */
 .glass-card {
   background-color: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border-radius: var(--radius-md);
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+/* ============================================================
+   KHI NHẤN / HOVER / FOCUS — GIỮ NGUYÊN NỀN (KHÔNG ĐỔI)
+   ============================================================ */
+
+.glass-card:active,
+.glass-card:hover,
+.glass-card:focus,
+.glass-card:focus-visible,
+.glass-card:visited {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.glass-inputbar:active,
+.glass-inputbar:hover,
+.glass-inputbar:focus,
+.glass-inputbar:focus-visible {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  outline: none;
+}
+
+/* ============================================================
+   TẮT HIGHLIGHT XÁM MẶC ĐỊNH TRÌNH DUYỆT
+   ============================================================ */
+
+button,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+button:active,
+button:focus,
+[role="button"]:active,
+[role="button"]:focus {
+  outline: none;
 }
 
 /* ===== HỖ TRỢ TRÌNH DUYỆT KHÔNG CÓ backdrop-filter ===== */
@@ -91,10 +134,7 @@
     background-color: rgba(20, 20, 20, 0.98);
   }
 
-  .glass-inputbar {
-    background-color: rgba(20, 20, 20, 0.9);
-  }
-
+  .glass-inputbar,
   .glass-card {
     background-color: rgba(20, 20, 20, 0.9);
   }
