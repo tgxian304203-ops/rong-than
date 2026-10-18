@@ -308,12 +308,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   if (parsed.type === "text") return { ok: true, text: parsed.text, meta: { action: "reply" } };
 
   if (parsed.type === "tool" && parsed.tool === "search_web") {
-    let query = parsed.args?.query || userRequest;
-    // [THÊM 1] Ép query phải có năm hiện tại (nếu BOSS quên)
-    const currentYear = new Date().getFullYear();
-    if (!/\b20\d{2}\b/.test(query)) {
-      query = `${query} ${currentYear}`;
-    }
+    const query = parsed.args?.query || userRequest;
     const web = await traWeb({ userId, conversationId, query, signal });
     const webContext = web.ok ? formatWebResults(web.results) : "";
     const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
@@ -404,11 +399,8 @@ function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, langua
 // CÁC HÀM XỬ LÝ PROMPT KHÁC
 // ============================================================
 function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
-  // [THÊM 2] Lấy ngày hôm nay + năm hiện tại
-  const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const currentYear = new Date().getFullYear();
   const messages = [
-    { role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'. Nếu cần tra cứu thông tin mới/giá cả/thời sự -> Gọi 'search_web' với JSON: {"tool":"search_web","args":{"query":"... ${currentYear}"}}.` }
+    { role: "system", content: `Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'.` }
   ];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
   messages.push({ role: "user", content: userRequest });
@@ -416,9 +408,7 @@ function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
 }
 
 function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
-  // [THÊM 3] Lấy ngày hôm nay
-  const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const messages = [{ role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User. Ưu tiên dữ liệu mới nhất; nếu dữ liệu cũ hơn 30 ngày so với hôm nay thì nói rõ ngày của dữ liệu.` }];
+  const messages = [{ role: "system", content: "Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User." }];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
   messages.push({ role: "user", content: ["Yêu cầu:", userRequest, "", "Dữ liệu web:", webContext || "(không có)"].join("\n") });
   return messages;
