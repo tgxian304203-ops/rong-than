@@ -309,7 +309,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
   if (parsed.type === "tool" && parsed.tool === "search_web") {
     let query = parsed.args?.query || userRequest;
-    // Ép query phải có năm hiện tại (nếu BOSS quên)
+    // [THÊM 1] Ép query phải có năm hiện tại (nếu BOSS quên)
     const currentYear = new Date().getFullYear();
     if (!/\b20\d{2}\b/.test(query)) {
       query = `${query} ${currentYear}`;
@@ -404,35 +404,11 @@ function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, langua
 // CÁC HÀM XỬ LÝ PROMPT KHÁC
 // ============================================================
 function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
+  // [THÊM 2] Lấy ngày hôm nay + năm hiện tại
   const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
   const currentYear = new Date().getFullYear();
   const messages = [
-    {
-      role: "system",
-      content:
-        `Hôm nay là ${today} (năm ${currentYear}).\n` +
-        "\n" +
-        "Bạn là Rồng Thần — BOSS. Dự án hiện có các file: " + (fileNames.join(", ") || "Chưa có file nào") + ".\n" +
-        "\n" +
-        "BẠN CÓ 2 TOOL:\n" +
-        "\n" +
-        "1. 'delegate_soldier' — giao việc cho lính (viết code, viết văn, sửa code):\n" +
-        "   Dùng khi User muốn tạo code mới, viết bài dài, hoặc sửa code.\n" +
-        "\n" +
-        "2. 'search_web' — tra cứu internet THỜI GIAN THỰC:\n" +
-        "   Dùng khi cần tin tức mới, giá cả, thời tiết, tỷ số, sự kiện,\n" +
-        "   hoặc BẤT CỨ gì có thể đã thay đổi sau ngày bạn được huấn luyện.\n" +
-        "   KHÔNG được nói 'tôi không truy cập được web' — bạn CÓ tool này.\n" +
-        "   KHI ĐẶT QUERY: BẮT BUỘC phải có năm " + currentYear + " trong query.\n" +
-        "   Ví dụ: User hỏi 'giá vàng hôm nay' → query: 'giá vàng " + today + "'.\n" +
-        "\n" +
-        "CÁCH GỌI TOOL — trả về DUY NHẤT JSON:\n" +
-        "  {\"tool\": \"search_web\", \"args\": {\"query\": \"... " + currentYear + "\"}}\n" +
-        "  {\"tool\": \"delegate_soldier\", \"args\": {\"taskType\": \"code|bulk|fix-code\", \"goal\": \"...\", \"requirements\": [], \"constraints\": [], \"expectedOutput\": \"\"}}\n" +
-        "\n" +
-        "Khi chat bình thường → trả TEXT tự nhiên, KHÔNG bọc JSON.\n" +
-        "KHÔNG dùng LaTeX hay $$."
-    }
+    { role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'. Nếu cần tra cứu thông tin mới/giá cả/thời sự -> Gọi 'search_web' với JSON: {"tool":"search_web","args":{"query":"... ${currentYear}"}}.` }
   ];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
   messages.push({ role: "user", content: userRequest });
@@ -440,30 +416,11 @@ function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
 }
 
 function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
+  // [THÊM 3] Lấy ngày hôm nay
   const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const messages = [
-    {
-      role: "system",
-      content:
-        `Hôm nay là ${today}.\n` +
-        "\n" +
-        "Bạn là Rồng Thần. Vừa tra web xong.\n" +
-        "Đọc dữ liệu → trả lời User tự nhiên bằng tiếng Việt.\n" +
-        "\n" +
-        "QUY TẮC BẮT BUỘC:\n" +
-        "1. Ưu tiên dữ liệu MỚI NHẤT trong kết quả. Nếu kết quả có ngày tháng → chọn cái gần " + today + " nhất.\n" +
-        "2. Nếu dữ liệu cũ hơn 30 ngày so với hôm nay → nói rõ: 'Dữ liệu mới nhất tôi tìm được là từ <ngày>.'\n" +
-        "3. KHÔNG tự bịa số liệu. Nếu web không có → nói 'Tôi không tìm thấy dữ liệu mới'.\n" +
-        "4. KHÔNG nhắc 'công cụ', 'tra web'.\n" +
-        "5. KHÔNG dùng LaTeX hay $$.\n" +
-        "6. Trích nguồn URL nếu có."
-    }
-  ];
+  const messages = [{ role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User. Ưu tiên dữ liệu mới nhất; nếu dữ liệu cũ hơn 30 ngày so với hôm nay thì nói rõ ngày của dữ liệu.` }];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
-  messages.push({
-    role: "user",
-    content: ["Yêu cầu của User:", userRequest, "", "Dữ liệu tra cứu:", webContext || "(không có)", "", "Trả lời User dựa trên dữ liệu trên, ưu tiên dữ liệu mới nhất."].join("\n")
-  });
+  messages.push({ role: "user", content: ["Yêu cầu:", userRequest, "", "Dữ liệu web:", webContext || "(không có)"].join("\n") });
   return messages;
 }
 
