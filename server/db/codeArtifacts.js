@@ -1,5 +1,5 @@
 // server/db/codeArtifacts.js
-// Nhiệm vụ: Collection codeArtifacts — các phiên bản code lính viết.
+// Nhiệm vụ: Collection codeArtifacts — hỗ trợ lưu trữ đa tệp (Virtual File System).
 
 import { ObjectId } from "mongodb";
 
@@ -11,22 +11,30 @@ function col() {
   return db.collection(COL_NAME);
 }
 
+/**
+ * Lưu phiên bản code mới. Hỗ trợ lưu 1 hoặc nhiều file.
+ * @param {object} p
+ * @param {string} p.userId
+ * @param {string} p.conversationId
+ * @param {object} p.files - Dạng { "index.html": "code...", "app.js": "code..." }
+ * @param {number} p.version
+ * @param {string} [p.taskId]
+ */
 export async function saveArtifact({
   userId,
   conversationId,
-  language,
-  code,
+  files,
   version = 1,
   taskId = null,
 }) {
+  const now = new Date();
   const doc = {
     userId,
     conversationId: String(conversationId),
     taskId: taskId ? String(taskId) : null,
-    language,
-    code,
+    files, // Lưu toàn bộ danh sách file
     version,
-    createdAt: new Date(),
+    createdAt: now,
   };
   const res = await col().insertOne(doc);
   return { ...doc, _id: res.insertedId };
@@ -39,16 +47,6 @@ export async function listByConversation(conversationId) {
     .toArray();
 }
 
-export async function getLatest(conversationId, language) {
-  return col().findOne(
-    { conversationId: String(conversationId), language },
-    { sort: { version: -1 } }
-  );
-}
-
-/**
- * Lấy code mới nhất của hội thoại — bất kể ngôn ngữ nào.
- */
 export async function getLatestAny(conversationId) {
   return col().findOne(
     { conversationId: String(conversationId) },
@@ -56,8 +54,8 @@ export async function getLatestAny(conversationId) {
   );
 }
 
-export async function getNextVersion(conversationId, language) {
-  const latest = await getLatest(conversationId, language);
+export async function getNextVersion(conversationId) {
+  const latest = await getLatestAny(conversationId);
   return latest ? latest.version + 1 : 1;
 }
 
