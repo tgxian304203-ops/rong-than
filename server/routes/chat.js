@@ -120,6 +120,13 @@ function isNoLogicError(text) {
 async function runStrictFixLoop({ userId, conversationId, language, initialCode, currentVersion = 0, signal }) {
   let currentCode = initialCode;
   let iteration = 0;
+  const startTime = Date.now();
+
+  await logInfo("FixLoop: BẮT ĐẦU", {
+    userId, conversationId, language,
+    codeLength: String(initialCode || "").length,
+    version: currentVersion,
+  });
 
   while (iteration < MAX_FIX_ITERATIONS) {
     iteration++;
@@ -127,6 +134,13 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
     // 1. SANDBOX — lỗi cú pháp
     const sandboxRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode: "", signal });
     let sandboxError = sandboxRes.ok ? "" : errString(sandboxRes.stderr || sandboxRes.error || "Lỗi Sandbox");
+
+    await logInfo(`FixLoop vòng ${iteration}: Sandbox`, {
+      userId, conversationId, language,
+      ok: sandboxRes.ok,
+      error: sandboxError ? sandboxError.slice(0, 300) : null,
+      elapsedMs: Date.now() - startTime,
+    });
 
     // 2. BOSS REVIEW — lỗi logic (trung thực)
     const reviewRes = await goiBoss({
@@ -139,14 +153,38 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
       logicError = reviewRes.text;
     }
 
+    await logInfo(`FixLoop vòng ${iteration}: Review logic`, {
+      userId, conversationId,
+      ok: reviewRes.ok,
+      hasLogicError: !!logicError,
+      logicErrorPreview: logicError ? logicError.slice(0, 300) : null,
+    });
+
     // 3. KHÔNG CÒN LỖI → TEST SANDBOX LẦN CUỐI → RETURN
     if (!sandboxError && !logicError) {
       const finalRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode: "", signal });
-      if (finalRes.ok) return { ok: true, code: currentCode, language };
+      if (finalRes.ok) {
+        await logInfo("FixLoop: SẠCH HOÀN TOÀN — kết thúc", {
+          userId, conversationId, language,
+          iterations: iteration,
+          elapsedMs: Date.now() - startTime,
+        });
+        return { ok: true, code: currentCode, language };
+      }
       sandboxError = errString(finalRes.stderr || finalRes.error || "Lỗi Sandbox cuối");
+      await logWarn("FixLoop: Sandbox cuối FAIL — tiếp tục sửa", {
+        userId, conversationId, iteration,
+        error: sandboxError.slice(0, 300),
+      });
     }
 
     // 4. TỔNG HỢP CẢ 2 LỖI → BOSS SỬA 1 LẦN
+    await logInfo(`FixLoop vòng ${iteration}: Gọi BOSS sửa`, {
+      userId, conversationId,
+      hasSandboxError: !!sandboxError,
+      hasLogicError: !!logicError,
+    });
+
     const fixRes = await goiBoss({
       userId, conversationId, taskType: "call-boss",
       messages: buildBossFixCodeMessages({ sandboxError, logicError, failedCode: currentCode, language }),
@@ -158,9 +196,29 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
       if (v.ok) {
         currentCode = v.code;
         language = v.language || language;
+        await logInfo(`FixLoop vòng ${iteration}: BOSS đã sửa`, {
+          userId, conversationId,
+          newLanguage: language,
+          newCodeLength: String(currentCode).length,
+        });
+      } else {
+        await logWarn(`FixLoop vòng ${iteration}: BOSS trả code không hợp lệ`, {
+          userId, conversationId, reason: v.reason,
+        });
       }
+    } else {
+      await logWarn(`FixLoop vòng ${iteration}: BOSS sửa thất bại`, {
+        userId, conversationId, error: fixRes.error || "Không có text",
+      });
     }
   }
+
+  await logWarn("FixLoop: HẾT 5 VÒNG VẪN LỖI", {
+    userId, conversationId, language,
+    iterations: iteration,
+    elapsedMs: Date.now() - startTime,
+    finalCodeLength: String(currentCode).length,
+  });
 
   return { ok: false, error: `Đã thử sửa ${MAX_FIX_ITERATIONS} lần nhưng vẫn còn lỗi.`, code: currentCode, language };
 }
@@ -185,10 +243,32 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   const fileNames = Object.keys(projectFiles);
   const extractedFromUser = extractCodeFromRequest(userRequest);
 
+  await logInfo("BOSS: đọc ngữ cảnh", {
+    userId, conversationId,
+    fileCount: fileNames.length,
+    version: currentVersion,
+    hasUserCode: !!extractedFromUser,
+    userCodeLang: extractedFromUser?.language || null,
+    userCodeHasName: extractedFromUser?.hasExplicitName || false,
+  });
+
   // 1. NGƯỜI DÙNG GỬI CODE — TEST RỒI HỎI
   if (extractedFromUser) {
+    await logInfo("Nhánh USER gửi code — bắt đầu test", {
+      userId, conversationId,
+      language: extractedFromUser.language,
+      codeLength: extractedFromUser.code.length,
+      filename: extractedFromUser.filename,
+    });
+
     const sandboxRes = await kiemTraSandbox({ userId, conversationId, language: extractedFromUser.language, code: extractedFromUser.code, testCode: "", signal });
     const sandboxError = sandboxRes.ok ? "" : errString(sandboxRes.stderr || sandboxRes.error || "Lỗi Sandbox");
+
+    await logInfo("Nhánh USER: Sandbox xong", {
+      userId, conversationId,
+      ok: sandboxRes.ok,
+      error: sandboxError ? sandboxError.slice(0, 300) : null,
+    });
 
     const reviewRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: buildFinalLogicCheck({ code: extractedFromUser.code, language: extractedFromUser.language }), temperature: 0.1, maxTokens: 4096, signal });
 
@@ -197,6 +277,13 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       logicError = reviewRes.text;
     }
 
+    await logInfo("Nhánh USER: Review logic xong", {
+      userId, conversationId,
+      ok: reviewRes.ok,
+      hasLogicError: !!logicError,
+      logicErrorPreview: logicError ? logicError.slice(0, 300) : null,
+    });
+
     const hasError = !!sandboxError || !!logicError;
 
     if (extractedFromUser.hasExplicitName) {
@@ -204,16 +291,20 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
       
       if (hasError) {
+        await logInfo("Nhánh USER: kết quả CÓ LỖI — hỏi user", { userId, conversationId, filename: extractedFromUser.filename });
         return { ok: true, text: `✅ Đã lưu file \`${extractedFromUser.filename}\` vào dự án.\n⚠ Lưu ý: File này vẫn còn lỗi. Bạn có muốn tôi sửa không?`, meta: { action: "save-with-error" } };
       }
+      await logInfo("Nhánh USER: kết quả SẠCH — lưu file", { userId, conversationId, filename: extractedFromUser.filename });
       return { ok: true, text: `✅ Đã lưu file \`${extractedFromUser.filename}\` vào dự án thành công (Code sạch).`, meta: { action: "save-pass" } };
     } else {
       projectFiles[extractedFromUser.filename] = extractedFromUser.code;
       try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
 
       if (!hasError) {
+        await logInfo("Nhánh USER: kết quả SẠCH — không lưu tên", { userId, conversationId });
         return { ok: true, text: `✅ Code hoàn toàn chính xác. Không phát hiện lỗi cú pháp hay lỗi logic.`, meta: { action: "test-pass" } };
       } else {
+        await logInfo("Nhánh USER: kết quả CÓ LỖI — hỏi user", { userId, conversationId });
         let errorMsg = "Tôi đã kiểm tra và phát hiện lỗi trong code của bạn:\n\n";
         if (sandboxError) errorMsg += `🚨 **Lỗi cú pháp/Runtime:**\n\`\`\`\n${sandboxError.slice(0, 300)}\n\`\`\`\n\n`;
         if (logicError) errorMsg += `🧠 **Lỗi Logic:**\n${logicError}\n\n`;
@@ -229,6 +320,8 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     const latestFile = fileNames.find(f => f.startsWith("temp_code")) || fileNames[0];
     const lang = latestFile.split('.').pop();
     const originalCode = projectFiles[latestFile];
+
+    await logInfo("Nhánh 'SỬA ĐI' — bắt đầu", { userId, conversationId, file: latestFile, language: lang });
 
     const fixResult = await runStrictFixLoop({ 
         userId, conversationId, language: lang, 
@@ -256,6 +349,8 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
     const lang = targetFile.filename.split('.').pop();
     const originalCode = targetFile.code;
+
+    await logInfo("Nhánh 'SỬA FILE' — bắt đầu", { userId, conversationId, file: targetFile.filename, language: lang });
 
     const fixResult = await runStrictFixLoop({ 
         userId, conversationId, language: lang, 
@@ -297,10 +392,17 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
   let parsed = parseBossOutput(bossRes.text);
 
+  await logInfo("BOSS: quyết định", {
+    userId, conversationId,
+    type: parsed.type,
+    tool: parsed.tool || null,
+  });
+
   if (parsed.type === "text") return { ok: true, text: parsed.text, meta: { action: "reply" } };
 
   if (parsed.type === "tool" && parsed.tool === "search_web") {
     const query = parsed.args?.query || userRequest;
+    await logInfo("BOSS: gọi WEB", { userId, conversationId, query });
     const web = await traWeb({ userId, conversationId, query, signal });
     const webContext = web.ok ? formatWebResults(web.results) : "";
     const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
@@ -313,6 +415,8 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     const taskType = args.taskType || "bulk";
     const goal = args.goal || userRequest;
     const requestTokens = countTokens(userRequest);
+
+    await logInfo("BOSS: giao LÍNH", { userId, conversationId, taskType, goalPreview: String(goal).slice(0, 200) });
 
     if (requestTokens > LIMITS.CONTEXT_TOKEN_GEMINI_MAX) return await runChunkedDelegate({ userId, conversationId, userRequest, bossSessionId, historyCtx, history, signal });
 
@@ -328,6 +432,12 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     
     const validation = validateCodeOutput(linh.text);
     if (!validation.ok) return { ok: false, error: "Lính không trả về code hợp lệ." };
+
+    await logInfo("LÍNH: trả code hợp lệ — vào FixLoop", {
+      userId, conversationId,
+      language: validation.language,
+      codeLength: validation.code.length,
+    });
 
     const fixResult = await runStrictFixLoop({ 
         userId, conversationId, language: validation.language, 
