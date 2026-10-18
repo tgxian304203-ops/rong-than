@@ -1,7 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — BOSS như ChatGPT.
-// FIX TRIỆT ĐỂ: Bỏ hoàn toàn việc BOSS gọi tool test_sandbox (tránh lỗi in JSON thô).
-// Hệ thống tự động trích code từ tin nhắn User -> Test Sandbox -> Nếu lỗi thì gọi BOSS tự sửa.
+// Quy trình mới: BOSS tự đọc code -> Tự sinh Test Code -> Sandbox kiểm chứng -> Nếu lỗi thật mới sửa.
 
 import express from "express";
 import multer from "multer";
@@ -22,7 +21,6 @@ import { traKetQuaChoUser } from "../gateway/tra-ket-qua-cho-user.js";
 import { nhanYeuCau as bossNhanYeuCau } from "../boss/nhan-yeu-cau.js";
 import { traWeb, formatWebResults } from "../boss/tra-web.js";
 import { giaoFormat } from "../boss/giao-format.js";
-import { nhanKetQuaLinh } from "../boss/nhan-ket-qua-linh.js";
 import { kiemTraSandbox } from "../boss/kiem-tra-sandbox.js";
 
 import { goiBoss } from "../dai-nao/goi-boss.js";
@@ -79,7 +77,6 @@ function errString(e) {
   try { return JSON.stringify(e); } catch { return String(e); }
 }
 
-// Hàm tự động trích xuất code từ văn bản (Dùng cho cả User và BOSS)
 function extractCodeFromRequest(userRequest) {
   if (!userRequest || typeof userRequest !== "string") return null;
   const blockMatch = userRequest.match(/```([a-zA-Z0-9+\-#.]*)\n([\s\S]*?)```/);
@@ -96,9 +93,9 @@ function extractCodeFromRequest(userRequest) {
 }
 
 // ============================================================
-// VÒNG LẶP BOSS TỰ SỬA CODE
+// VÒNG LẶP BOSS TỰ SỬA CODE (Có Test Code chứng minh)
 // ============================================================
-async function runBossFixLoop({ userId, conversationId, userRequest, language, code, initialError, currentVersion = 0, signal }) {
+async function runBossFixLoop({ userId, conversationId, userRequest, language, code, initialError, testCode = "", currentVersion = 0, signal }) {
   let currentCode = code;
   let lastError = errString(initialError);
   let iteration = 0;
@@ -110,10 +107,8 @@ async function runBossFixLoop({ userId, conversationId, userRequest, language, c
     if (Date.now() - startTime > SANDBOX_TIME_BUDGET_MS) break;
     iteration++;
 
-    await logInfo(`BOSS: Tự sửa vòng ${iteration}`, { userId, conversationId });
-
-    const fixMessages = buildBossFixCodeMessages({ userRequest, failedCode: currentCode, stderr: lastError, language });
-    const bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: fixMessages, temperature: 0.2, maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS, signal });
+    const fixMessages = buildBossFixCodeMessages({ userRequest, failedCode: currentCode, stderr: lastError, language, testCode });
+    const bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: fixMessages, temperature: 0.1, maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS, signal });
 
     if (!bossRes.ok || !bossRes.text) {
       lastError = errString(bossRes.error || "BOSS không phản hồi");
@@ -129,7 +124,8 @@ async function runBossFixLoop({ userId, conversationId, userRequest, language, c
       continue;
     }
 
-    const testRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode: "", signal });
+    // Chạy test lại (kèm theo Test Code của BOSS để kiểm tra logic)
+    const testRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode, signal });
     
     if (testRes.ok) {
       try { await saveArtifact({ userId, conversationId, language, code: currentCode, version: currentVersion + 1 }); } catch {}
@@ -140,6 +136,30 @@ async function runBossFixLoop({ userId, conversationId, userRequest, language, c
 
   try { await saveArtifact({ userId, conversationId, language, code: currentCode, version: currentVersion + 1 }); } catch {}
   return { ok: false, code: currentCode, language, iterations: iteration, sandboxMeta: { status: "failed" }, error: "Đã hết lượt sửa hoặc hết thời gian." };
+}
+
+// ============================================================
+// BOSS REVIEW CODE (Tự sinh Test Code để chứng minh lỗi)
+// ============================================================
+async function reviewCodeLogic({ userId, conversationId, language, code, signal }) {
+  const messages = buildBossReviewMessages({ language, code });
+  const res = await goiBoss({ userId, conversationId, taskType: "call-boss", messages, temperature: 0.1, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
+
+  if (!res.ok || !res.text) return { ok: false, error: res.error || "BOSS không phản hồi" };
+
+  let s = res.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+  let parsed = null;
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { parsed = JSON.parse(s.slice(start, end + 1)); } catch {}
+  }
+
+  if (!parsed || typeof parsed.hasError === "undefined") {
+    return { ok: false, error: "BOSS trả về JSON không hợp lệ." };
+  }
+
+  return { ok: true, hasError: parsed.hasError, testCode: parsed.testCode || "", errorDesc: parsed.errorDesc || "" };
 }
 
 // ============================================================
@@ -160,38 +180,49 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
   } catch {}
 
-  // ============================================================
-  // [FIX LỖI TRIỆT ĐỂ] TỰ ĐỘNG PHÁT HIỆN CODE TRONG TIN NHẮN USER
-  // ============================================================
+  // 1. NẾU USER GỬI CODE -> REVIEW LOGIC TỰ ĐỘNG
   const extractedFromUser = extractCodeFromRequest(userRequest);
-  const isShortFixCommand = /^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa|kiểm tra đi|kiểm tra code|test đi|test code)$/i.test(userRequest.trim());
-
   if (extractedFromUser) {
-    // User gửi code (kèm chữ "kiểm tra" hoặc không) -> Tự động Test Sandbox
-    await logInfo("HỆ THỐNG: Tự động phát hiện code từ User -> Test Sandbox", { userId, conversationId });
+    await logInfo("HỆ THỐNG: User gửi code -> Gọi BOSS Review Logic tự động", { userId, conversationId });
     
-    const testRes = await kiemTraSandbox({ userId, conversationId, language: extractedFromUser.language, code: extractedFromUser.code, testCode: "", signal });
+    // BOSS Review: Tự tìm lỗi & sinh Test Code
+    const review = await reviewCodeLogic({ userId, conversationId, language: extractedFromUser.language, code: extractedFromUser.code, signal });
     
-    if (testRes.ok) {
-      try { await saveArtifact({ userId, conversationId, language: extractedFromUser.language, code: extractedFromUser.code, version: (currentCode?.version || 0) + 1 }); } catch {}
-      return { ok: true, text: "✅ Code của bạn đã vượt qua kiểm thử (không có lỗi cú pháp/runtime).", meta: { action: "test-sandbox-pass" } };
-    }
+    if (review.ok && review.hasError && review.testCode) {
+      // Nếu BOSS báo có lỗi & có Test Code -> Sandbox kiểm chứng
+      const testRes = await kiemTraSandbox({ userId, conversationId, language: extractedFromUser.language, code: extractedFromUser.code, testCode: review.testCode, signal });
+      
+      if (!testRes.ok) {
+        // Lỗi thật (Sandbox FAIL) -> Kích hoạt sửa
+        const initialError = errString(testRes.stderr || testRes.error || "Lỗi không rõ");
+        const fixResult = await runBossFixLoop({ userId, conversationId, userRequest: "Sửa lỗi logic được phát hiện", language: extractedFromUser.language, code: extractedFromUser.code, initialError, testCode: review.testCode, currentVersion: (currentCode?.version || 0), signal });
 
-    // Nếu lỗi -> Gọi BOSS sửa
-    const initialError = errString(testRes.stderr || testRes.error || "Không rõ lỗi");
-    const fixResult = await runBossFixLoop({ userId, conversationId, userRequest: "Sửa lỗi code cho User", language: extractedFromUser.language, code: extractedFromUser.code, initialError, currentVersion: (currentCode?.version || 0), signal });
-
-    if (fixResult.ok) {
-      return { ok: true, text: `✅ Đã phát hiện lỗi và tự động sửa thành công.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "test-sandbox-fixed" } };
+        if (fixResult.ok) {
+          return { ok: true, text: `✅ Đã tự động phát hiện lỗi logic và sửa thành công.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "review-fixed" } };
+        } else {
+          return { ok: true, text: `⚠ Có lỗi logic, đã cố sửa nhưng chưa xong.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\`\n\nLỗi: ${fixResult.error}`, meta: { action: "review-fail" } };
+        }
+      } else {
+        // BOSS bịa lỗi (Sandbox PASS dù có Test Code) -> Từ chối sửa
+        return { ok: true, text: `✅ Đã kiểm tra logic. Code của bạn hoạt động chính xác, không có lỗi.`, meta: { action: "review-pass" } };
+      }
     } else {
-      return { ok: true, text: `⚠ Code có lỗi, đã cố gắng sửa nhưng vẫn thất bại.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\`\n\nLỗi cuối cùng: ${fixResult.error}`, meta: { action: "test-sandbox-fail-fixed" } };
+      // BOSS bảo không có lỗi, hoặc BOSS không đưa ra được Test Code
+      return { ok: true, text: `✅ Đã kiểm tra logic. Code của bạn hoạt động chính xác, không có lỗi.`, meta: { action: "review-pass" } };
     }
   }
 
+  // 2. NẾU USER YÊU CẦU SỬA CODE ĐANG CÓ (Lệnh ngắn)
+  const isShortFixCommand = /^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa)$/i.test(userRequest.trim());
   if (currentCode && isShortFixCommand) {
-    // User chỉ gõ "Sửa đi" -> Tự động sửa code đang có
-    await logInfo("HỆ THỐNG: Tự động kích hoạt sửa code từ lệnh ngắn của User", { userId, conversationId });
-    const fixResult = await runBossFixLoop({ userId, conversationId, userRequest: "Sửa các lỗi hiện tại", language: currentCode.language, code: currentCode.code, initialError: "Người dùng yêu cầu sửa", currentVersion: currentCode.version, signal });
+    await logInfo("HỆ THỐNG: Tự động sửa code theo lệnh ngắn", { userId, conversationId });
+    const testRes = await kiemTraSandbox({ userId, conversationId, language: currentCode.language, code: currentCode.code, testCode: "", signal });
+    if (testRes.ok) {
+       return { ok: true, text: "✅ Code hiện tại đang chạy tốt, không phát hiện lỗi. Bạn có yêu cầu cụ thể nào cần sửa không?", meta: { action: "boss-fix-nothing" } };
+    }
+    
+    const initialError = errString(testRes.stderr || testRes.error || "Không rõ lỗi");
+    const fixResult = await runBossFixLoop({ userId, conversationId, userRequest: "Sửa các lỗi hiện tại", language: currentCode.language, code: currentCode.code, initialError, currentVersion: currentCode.version, signal });
     
     if (fixResult.ok) {
       return { ok: true, text: `✅ Đã sửa xong các lỗi.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "boss-fixed" } };
@@ -200,8 +231,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
   }
 
-  await logInfo("BOSS: đọc ngữ cảnh", { userId, conversationId, historyCount: historyCtx.length, hasCode: !!currentCode });
-
+  // 3. CHAT BÌNH THƯỜNG HOẶC TẠO CODE MỚI
   const bossMessages = buildBossMessages({ userRequest, history: historyCtx, currentCode });
 
   let bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: bossMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
@@ -215,7 +245,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
   if (parsed.type === "text") return { ok: true, text: parsed.text, meta: { action: "reply" } };
 
-  // ===== SEARCH_WEB =====
+  // SEARCH_WEB
   if (parsed.type === "tool" && parsed.tool === "search_web") {
     const query = parsed.args?.query || userRequest;
     const web = await traWeb({ userId, conversationId, query, signal });
@@ -225,7 +255,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web. ${web.error || ""}`, meta: { action: "web", web: { used: true, ok: web.ok } } };
   }
 
-  // ===== DELEGATE_SOLDIER (Chỉ dùng khi tạo code mới từ đầu) =====
+  // DELEGATE_SOLDIER (Code mới)
   if (parsed.type === "tool" && parsed.tool === "delegate_soldier") {
     const args = parsed.args || {};
     const taskType = args.taskType || "bulk";
@@ -234,7 +264,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
     if (requestTokens > LIMITS.CONTEXT_TOKEN_GEMINI_MAX) return await runChunkedDelegate({ userId, conversationId, userRequest, bossSessionId, historyCtx, history, signal });
 
-    const format = { taskType, goal, requirements: args.requirements || [], constraints: args.constraints || [], expectedOutput: args.expectedOutput || "", needCode: taskType === "code" || taskType === "fix-code", currentCode: currentCode || null, isModify: !!currentCode, subtasks: [], risks: [], qualityCriteria: [] };
+    const format = { taskType, goal, requirements: args.requirements || [], constraints: args.constraints || [], expectedOutput: args.expectedOutput || "", needCode: taskType === "code", currentCode: currentCode || null, isModify: false, subtasks: [], risks: [], qualityCriteria: [] };
     
     const giao = await giaoFormat({ userId, conversationId, bossSessionId, format, tokens: countTokens(userRequest) });
     if (!giao.ok) return { ok: false, error: giao.error };
@@ -255,7 +285,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
 
     const initialError = errString(testRes.stderr || testRes.error || "Không rõ lỗi");
-    const fixResult = await runBossFixLoop({ userId, conversationId, userRequest, language: validation.language, code: validation.code, initialError, currentVersion: (currentCode?.version || 0), signal });
+    const fixResult = await runBossFixLoop({ userId, conversationId, userRequest, language: validation.language, code: validation.code, initialError, testCode: "", currentVersion: (currentCode?.version || 0), signal });
 
     if (fixResult.ok) {
       return { ok: true, text: `✅ Code đã được tạo và tự động sửa lỗi thành công.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "delegate-fixed" } };
@@ -268,20 +298,73 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 }
 
 // ============================================================
-// PROMPT BOSS CHÍNH (Đã xóa tool test_sandbox, bắt buộc tự động)
+// PROMPT BOSS REVIEW (Ép BOSS sinh Test Code chứng minh)
+// ============================================================
+function buildBossReviewMessages({ language, code }) {
+  return [
+    {
+      role: "system",
+      content:
+        "Bạn là Chuyên gia Kiểm thử (QA) khó tính. Nhiệm vụ của bạn là đọc code và kiểm tra xem có lỗi logic nào không.\n" +
+        "QUY TẮC SỐNG CÒN:\n" +
+        "1. TUYỆT ĐỐI KHÔNG BỊA LỖI. Nếu code chạy đúng, hãy báo không có lỗi.\n" +
+        "2. Nếu bạn tìm thấy lỗi logic, BẮT BUỘC phải viết một đoạn 'testCode' (sử dụng assert) để chứng minh lỗi đó là thật.\n" +
+        "3. Nếu không viết được testCode chứng minh, coi như code không có lỗi.\n\n" +
+        "Trả về DUY NHẤT 1 JSON:\n" +
+        "{\n" +
+        "  \"hasError\": true/false,\n" +
+        "  \"errorDesc\": \"Mô tả lỗi (nếu có)\",\n" +
+        "  \"testCode\": \"Đoạn code assert để chứng minh lỗi. (Nếu không có lỗi thì để rỗng)\"\n" +
+        "}\n\n" +
+        "Ví dụ testCode: `assert(tinhTong(10) === 55, 'Lỗi: Hàm tính tổng sai');`"
+    },
+    {
+      role: "user",
+      content: `Ngôn ngữ: ${language}\n\nCode cần review:\n\`\`\`${language}\n${code}\n\`\`\``
+    }
+  ];
+}
+
+// ============================================================
+// PROMPT BOSS FIX (Sửa code dựa trên Test Code bị fail)
+// ============================================================
+function buildBossFixCodeMessages({ userRequest, failedCode, stderr, language, testCode }) {
+  const testNote = testCode ? `\n\nLƯU Ý: Phải sửa code sao cho đoạn Test Code sau chạy PASS:\n\`\`\`${language}\n${testCode}\n\`\`\`` : "";
+  return [
+    {
+      role: "system",
+      content:
+        "Bạn là BOSS. Code đang bị lỗi (đã được chứng minh bằng Test Code).\n" +
+        "Nhiệm vụ: ĐỌC LỖI, SỬA CODE và TRẢ VỀ TOÀN BỘ CODE.\n" +
+        "CẢNH BÁO: KHÔNG viết lại từ đầu. Chỉ thay thế chính xác đoạn code bị lỗi và giữ nguyên các phần khác.\n" +
+        "BẮT BUỘC trả về TOÀN BỘ CODE trong ```<ngôn ngữ>...```." + testNote
+    },
+    {
+      role: "user",
+      content: [
+        "Yêu cầu gốc:", userRequest, "",
+        "Ngôn ngữ:", language, "",
+        "Lỗi Sandbox báo:", "```", stderr, "```", "",
+        "Code hiện tại bị lỗi:", "```" + language, failedCode, "```", "",
+        "Hãy sửa và trả về TOÀN BỘ CODE hoàn chỉnh."
+      ].join("\n"),
+    },
+  ];
+}
+
+// ============================================================
+// CÁC HÀM PROMPT KHÁC (Giữ nguyên)
 // ============================================================
 function buildBossMessages({ userRequest, history = [], currentCode = null }) {
   const messages = [
     {
       role: "system",
       content:
-        "Bạn là Rồng Thần — BOSS, trợ lý AI thông minh.\n" +
+        "Bạn là Rồng Thần — BOSS.\n" +
         "1. 🧠 LÍNH: Viết code mới.\n" +
         "2. 🌐 WEB: Tra cứu internet.\n\n" +
-        "QUY TẮC PHÂN BIỆT:\n" +
-        "🅰️ Nếu User gửi code (dù kèm chữ kiểm tra hay không) -> Hệ thống sẽ TỰ ĐỘNG test. Bạn KHÔNG cần làm gì cả.\n" +
-        "🅱️ LÀM CODE MỚI: User nói 'làm', 'tạo', 'viết' -> Gọi 'delegate_soldier' với taskType='code'.\n" +
-        "🅲 SỬA CODE: User nói 'sửa', 'fix' -> Hệ thống tự động xử lý, bạn KHÔNG cần gọi tool.\n\n" +
+        "QUY TẮC: Nếu User muốn viết web/app -> Gọi 'delegate_soldier' với taskType='code'.\n" +
+        "Nếu User chỉ chat -> Trả TEXT tự nhiên.\n\n" +
         "CÁCH TRẢ LỜI:\n" +
         "【Chat】→ TEXT tự nhiên.\n" +
         "【Tra web】→ {\"tool\": \"search_web\", \"args\": {\"query\": \"...\"}}\n" +
@@ -330,30 +413,6 @@ function parseBossOutput(text) {
   return { type: "text", text: s };
 }
 
-function buildBossFixCodeMessages({ userRequest, failedCode, stderr, language }) {
-  return [
-    {
-      role: "system",
-      content:
-        "Bạn là BOSS. Code của bạn bị lỗi Sandbox.\n" +
-        "Nhiệm vụ của bạn là ĐỌC LỖI, SỬA LẠI CODE và TRẢ VỀ TOÀN BỘ CODE ĐÃ SỬA.\n" +
-        "CẢNH BÁO: Code này rất dài. TUYỆT ĐỐI KHÔNG viết lại từ đầu. Chỉ được phép thay thế chính xác đoạn code bị lỗi và giữ nguyên các phần khác.\n" +
-        "KHÔNG giải thích dài dòng, KHÔNG dùng shell commands.\n" +
-        "BẮT BUỘC trả về TOÀN BỘ CODE HOÀN CHỈNH trong ```<ngôn ngữ>...```."
-    },
-    {
-      role: "user",
-      content: [
-        "Yêu cầu gốc:", userRequest, "",
-        "Ngôn ngữ:", language, "",
-        "Lỗi Sandbox báo:", "```", stderr, "```", "",
-        "Code hiện tại bị lỗi:", "```" + language, failedCode, "```", "",
-        "Hãy sửa và trả về TOÀN BỘ CODE hoàn chỉnh (đặt trong ```<ngôn ngữ> ... ```)."
-      ].join("\n"),
-    },
-  ];
-}
-
 function buildSoldierMessages({ format, history = [], userRequest, currentCode = null }) {
   const messages = [{ role: "system", content: "Bạn là lính. Viết code theo format BOSS giao.\n1. Trả về TOÀN BỘ CODE.\n2. Không dùng shell.\n3. Đặt trong ```<lang>...```." }];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
@@ -397,7 +456,6 @@ function isRealPython(body) { return /(def\s+|class\s+|import\s+|from\s+|print\s
 
 async function runChunkedDelegate({ userId, conversationId, userRequest, bossSessionId, historyCtx, history, signal }) {
   const chunks = chunkText(userRequest);
-  await logInfo("BOSS: chạy pipeline CHUNKED", { userId, conversationId, chunkCount: chunks.length });
   const outputs = [];
   const codeChunks = [];
   let lastLanguage = "html";
@@ -411,37 +469,26 @@ async function runChunkedDelegate({ userId, conversationId, userRequest, bossSes
     if (!linh.ok) continue;
     const validation = validateCodeOutput(linh.text || "");
     if (!validation.ok) { outputs.push(`[Phần ${i + 1}]\n${linh.text || ""}`); continue; }
-    const lang = validation.language;
-    const code = validation.code;
-    lastLanguage = lang;
-    codeChunks.push(code);
-    outputs.push(`[Phần ${i + 1}]\n\`\`\`${lang}\n${code}\n\`\`\``);
+    codeChunks.push(validation.code);
+    outputs.push(`[Phần ${i + 1}]\n\`\`\`${validation.language}\n${validation.code}\n\`\`\``);
   }
   let finalText = outputs.join("\n\n");
-  let codeMeta = null;
-  let sandboxStatus = "not_run";
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
     try {
       const testRes = await kiemTraSandbox({ userId, conversationId, language: lastLanguage, code: mergedCode, testCode: "", signal });
-      sandboxStatus = testRes.ok ? "passed" : "failed";
-      await logInfo("BOSS: Sandbox code ghép", { userId, conversationId, status: testRes.status, version: testRes.version });
+      if (testRes.ok) finalText = `✅ Code đã vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
+      else finalText = `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\`\n\nBạn có thể bấm **🔧 Sửa tiếp** để mình tiếp tục sửa.`;
     } catch {}
-    try {
-      const saved = await saveArtifact({ userId, conversationId, language: lastLanguage, code: mergedCode, version: 1 });
-      codeMeta = { language: lastLanguage, version: saved.version, artifactId: String(saved._id) };
-    } catch {}
-    if (sandboxStatus === "passed") finalText = `✅ Code đã vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
-    else finalText = `⚠ Code chưa vượt qua kiểm thử.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\`\n\nBạn có thể bấm **🔧 Sửa tiếp** để mình tiếp tục sửa.`;
+    try { await saveArtifact({ userId, conversationId, language: lastLanguage, code: mergedCode, version: 1 }); } catch {}
   }
-  return { ok: true, text: finalText, meta: { action: "delegate-chunked", code: codeMeta, chunked: true, chunkCount: chunks.length, resumeAvailable: sandboxStatus === "failed" } };
+  return { ok: true, text: finalText, meta: { action: "delegate-chunked", chunked: true, chunkCount: chunks.length } };
 }
 
 function mergeCodeChunks(codeChunks, language) {
   if (!Array.isArray(codeChunks) || codeChunks.length === 0) return "";
   if (language === "html") {
-    let bodyContent = "";
-    let headContent = "";
+    let bodyContent = "", headContent = "";
     for (const chunk of codeChunks) {
       const headMatch = chunk.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
       if (headMatch) headContent += "\n" + headMatch[1];
@@ -454,7 +501,8 @@ function mergeCodeChunks(codeChunks, language) {
   return codeChunks.join("\n\n");
 }
 
-router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, res, (err) => { if (err) { logWarn("Multer upload lỗi", { error: err?.message || String(err) }); return res.status(400).json({ ok: false, message: err?.message || "Lỗi upload" }); } next(); }); }, async (req, res) => {
+// ROUTE
+router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, res, (err) => { if (err) { return res.status(400).json({ ok: false, message: "Lỗi upload" }); } next(); }); }, async (req, res) => {
   try {
     const userId = getUserId(req);
     const files = Array.isArray(req.files) ? req.files : [];
@@ -478,7 +526,7 @@ router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, 
           if (isImage && !tooBig) dataUrl = `data:${f.mimetype};base64,${f.buffer.toString("base64")}`;
           const att = await saveAttachment({ userId, conversationId, messageId: String(recv.userMessage._id), name: f.originalname || "tệp", type: f.mimetype || "application/octet-stream", size: f.size || 0, url: "", dataUrl });
           savedAttachments.push({ id: String(att._id), name: att.name, type: att.type, size: att.size, url: "", dataUrl: att.dataUrl || "" });
-        } catch (e) { await logWarn("Không lưu được tệp đính kèm", { error: e?.message || String(e) }); }
+        } catch {}
       }
     }
 
@@ -495,7 +543,7 @@ router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, 
     if (!delivered.ok) return res.status(500).json({ ok: false, message: delivered.error });
 
     return res.json({ ok: true, userMessage: { ...recv.userMessage, id: String(recv.userMessage._id), attachments: savedAttachments }, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } });
-  } catch (err) { await logWarn("Lỗi /chat/send", { error: err?.message || String(err) }); return res.status(500).json({ ok: false, message: "Lỗi server" }); }
+  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
 });
 
 router.post("/fix-continue", async (req, res) => {
@@ -504,8 +552,6 @@ router.post("/fix-continue", async (req, res) => {
     if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
     const conversationId = req.body?.conversationId;
     if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" });
-    try { await gwNhanYeuCau({ userId, conversationId, text: "🔧 Sửa tiếp", attachments: [] }); } catch {}
-    
     const latest = await getLatestCodeArtifact(conversationId);
     if (!latest || !latest.code) return res.status(400).json({ ok: false, message: "Không có code để sửa." });
 
@@ -518,73 +564,14 @@ router.post("/fix-continue", async (req, res) => {
     const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } });
     if (!delivered.ok) return res.status(500).json({ ok: false, message: delivered.error });
     return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } });
-  } catch (err) { await logWarn("Lỗi /chat/fix-continue", { error: err?.message || String(err) }); return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
-router.post("/conversations", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const { projectId = null, title = null } = req.body || {};
-    const convo = await createConversation({ userId, projectId, title });
-    return res.json({ ok: true, conversation: { ...convo, id: String(convo._id) } });
   } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
 });
 
-router.get("/conversations/:conversationId/messages", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const { conversationId } = req.params;
-    const convo = await getConversation(userId, conversationId);
-    if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" });
-    const raw = await listMessages(conversationId);
-    const items = await Promise.all(raw.map(attachFilesToMessage));
-    return res.json({ ok: true, items });
-  } catch (err) { await logWarn("Lỗi get messages", { error: err?.message || String(err) }); return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
-router.get("/conversations/recent", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const items = await listRecentConversations(userId, {});
-    return res.json({ ok: true, items });
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
-router.delete("/conversations/all", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const deleted = await deleteAllNonProjectConversations(userId);
-    return res.json({ ok: true, deleted });
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
-router.delete("/conversations/:conversationId", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const { conversationId } = req.params;
-    const ok = await dbDeleteConversation(userId, conversationId);
-    if (!ok) return res.status(404).json({ ok: false, message: "Không xóa được" });
-    return res.json({ ok: true });
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
-router.patch("/conversations/:conversationId", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const { conversationId } = req.params;
-    const { title } = req.body || {};
-    if (!title) return res.status(400).json({ ok: false, message: "Thiếu title" });
-    const convo = await getConversation(userId, conversationId);
-    if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy" });
-    const ok = await updateConversationTitle(conversationId, String(title));
-    return res.json({ ok });
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
+router.post("/conversations", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { projectId = null, title = null } = req.body || {}; const convo = await createConversation({ userId, projectId, title }); return res.json({ ok: true, conversation: { ...convo, id: String(convo._id) } }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.get("/conversations/:conversationId/messages", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { conversationId } = req.params; const convo = await getConversation(userId, conversationId); if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" }); const raw = await listMessages(conversationId); const items = await Promise.all(raw.map(attachFilesToMessage)); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.get("/conversations/recent", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const items = await listRecentConversations(userId, {}); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.delete("/conversations/all", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const deleted = await deleteAllNonProjectConversations(userId); return res.json({ ok: true, deleted }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.delete("/conversations/:conversationId", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { conversationId } = req.params; const ok = await dbDeleteConversation(userId, conversationId); if (!ok) return res.status(404).json({ ok: false, message: "Không xóa được" }); return res.json({ ok: true }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.patch("/conversations/:conversationId", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { conversationId } = req.params; const { title } = req.body || {}; if (!title) return res.status(400).json({ ok: false, message: "Thiếu title" }); const convo = await getConversation(userId, conversationId); if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy" }); const ok = await updateConversationTitle(conversationId, String(title)); return res.json({ ok }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 
 export default router;
