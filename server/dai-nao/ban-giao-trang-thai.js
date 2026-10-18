@@ -1,11 +1,5 @@
 // server/dai-nao/ban-giao-trang-thai.js
 // Nhiệm vụ: Bàn giao trạng thái cho BOSS mới.
-//
-// Quy tắc dự án (PHẦN 01, mục 5):
-//   - Khi BOSS hết quota hoặc lỗi → Đại Não gọi BOSS mới lên thay.
-//   - BOSS mới phải đọc lại yêu cầu User.
-//   - BOSS mới xác định tình trạng hiện tại đang làm gì, đã làm tới đâu.
-//   - BOSS mới tiếp tục nhiệm vụ.
 
 import { loadWorkState, WORK_STEP, WORK_STATUS } from "../state/luu-trang-thai.js";
 import { listTasks, listSubTasks } from "../state/theo-doi-nhiem-vu.js";
@@ -18,51 +12,27 @@ import { logInfo, logWarn } from "../logs/ghi-log.js";
 // BÀN GIAO
 // ============================================================
 
-/**
- * Đọc toàn bộ ngữ cảnh công việc để bàn giao cho BOSS mới.
- *
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @returns {Promise<{ok: boolean, handoff: object, error?: string}>}
- */
 export async function banGiaoTrangThai({ userId, conversationId }) {
   try {
-    // 1. Trạng thái công việc chính
     const workState = await loadWorkState(userId, conversationId);
-
-    // 2. Tasks (nhiệm vụ BOSS đã giao)
     const tasks = await listTasks(conversationId);
 
-    // 3. Subtasks của task gần nhất
     let subtasks = [];
     if (tasks.length > 0) {
       const latestTask = tasks[0];
       subtasks = await listSubTasks(String(latestTask._id));
     }
 
-    // 4. Lần chạy Sandbox
     const sandboxRuns = await listRuns(conversationId);
-
-    // 5. Phiên bản code
     const artifacts = await listArtifacts(conversationId);
-
-    // 6. Lần tra Web
     const webRuns = await listWebRuns(conversationId);
 
-    // ===== TỔNG HỢP =====
     const handoff = {
-      // Yêu cầu gốc của User
       userRequest: workState?.userRequest || null,
-
-      // Bước hiện tại + trạng thái
       currentStep: workState?.currentStep || WORK_STEP.RECEIVED,
       status: workState?.status || WORK_STATUS.PENDING,
-
-      // Ngữ cảnh do BOSS trước để lại
       context: workState?.context || {},
 
-      // Tình hình nhiệm vụ
       taskInfo: {
         total: tasks.length,
         latestTask: tasks[0]
@@ -79,7 +49,6 @@ export async function banGiaoTrangThai({ userId, conversationId }) {
         })),
       },
 
-      // Sandbox
       sandbox: {
         totalRuns: sandboxRuns.length,
         lastRun: sandboxRuns[0]
@@ -92,7 +61,6 @@ export async function banGiaoTrangThai({ userId, conversationId }) {
           : null,
       },
 
-      // Code
       code: {
         totalVersions: artifacts.length,
         latestVersion: artifacts[0]
@@ -104,7 +72,6 @@ export async function banGiaoTrangThai({ userId, conversationId }) {
           : null,
       },
 
-      // Web
       web: {
         totalRuns: webRuns.length,
         lastQuery: webRuns[0]?.query || null,
@@ -138,11 +105,6 @@ export async function banGiaoTrangThai({ userId, conversationId }) {
 // DỰNG MESSAGES BÀN GIAO
 // ============================================================
 
-/**
- * Dựng prompt bàn giao để nhét vào messages cho BOSS mới.
- * @param {object} handoff
- * @returns {string}
- */
 export function buildHandoffPrompt(handoff) {
   if (!handoff) return "";
 
