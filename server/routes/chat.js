@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — BOSS như ChatGPT.
-// QUY TRÌNH 6 BƯỚC: Sandbox (Cú pháp) -> BOSS Review (Logic) -> Tổng hợp -> BOSS Sửa -> Test lại.
+// QUY TRÌNH 6 BƯỚC: Sandbox (Cú pháp) -> BOSS Review (Logic) -> TỔNG HỢP LỖI -> BOSS Sửa (Cả 2) -> Test lại.
 
 import express from "express";
 import multer from "multer";
@@ -74,7 +74,6 @@ function errString(e) {
   try { return JSON.stringify(e); } catch { return String(e); }
 }
 
-// TRÍCH XUẤT CODE VÀ TÊN FILE TỰ ĐỘNG
 function extractCodeFromRequest(userRequest) {
   if (!userRequest || typeof userRequest !== "string") return null;
   
@@ -112,17 +111,17 @@ function getFileFromProject(filesObj, filenameOrIndex) {
 }
 
 // ============================================================
-// VÒNG LẶP 6 BƯỚC (ĐÃ FIX LỖI BOSS BÓ TAY)
+// VÒNG LẶP 6 BƯỚC (TỔNG HỢP VÀ SỬA CẢ 2 LỖI)
 // ============================================================
 async function runStrictFixLoop({ userId, conversationId, language, initialCode, currentVersion = 0, signal }) {
   let currentCode = initialCode;
   let iteration = 0;
-  let noChangeCount = 0; // Đếm số lần BOSS lười không sửa
+  let noChangeCount = 0;
 
   while (iteration < MAX_FIX_ITERATIONS) {
     iteration++;
 
-    // BƯỚC 1: TEST SANDBOX (Cú pháp)
+    // BƯỚC 1: TEST SANDBOX
     const sandboxRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode: "", signal });
     const sandboxError = sandboxRes.ok ? "" : errString(sandboxRes.stderr || sandboxRes.error || "Lỗi Sandbox");
 
@@ -141,7 +140,7 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
       return { ok: true, code: currentCode, language };
     }
 
-    // BƯỚC 3 & 4: TỔNG HỢP VÀ BOSS SỬA
+    // BƯỚC 3 & 4: TỔNG HỢP LỖI VÀ BOSS SỬA (SỬA CẢ 2 CÙNG LÚC)
     let finalLogicError = logicError;
     if (noChangeCount > 0) {
       finalLogicError += `\n\n[HỆ THỐNG CẢNH BÁO]: Lần trước bạn KHÔNG HỀ SỬA GÌ. Lần này BẮT BUỘC phải sửa đổi code!`;
@@ -158,10 +157,10 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
           if (noChangeCount >= 3) {
             return { ok: false, error: "BOSS đã 3 lần không chịu sửa code. Vui lòng thử lại.", code: currentCode, language };
           }
-          continue; // Thử lại vòng sau, kèm cảnh báo
+          continue; 
         }
         
-        noChangeCount = 0; // Reset bộ đếm vì BOSS đã sửa
+        noChangeCount = 0;
         currentCode = validation.code;
         language = validation.language || language;
       }
@@ -171,7 +170,7 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
 }
 
 // ============================================================
-// PIPELINE BOSS (TỰ ĐỘNG HIỂU NGỮ CẢNH)
+// PIPELINE BOSS
 // ============================================================
 async function runBossPipeline({ userId, conversationId, userRequest, userLabel, signal }) {
   const recv = await bossNhanYeuCau({ userId, conversationId, userRequest, userLabel });
@@ -253,7 +252,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
   }
 
-  // 3. SỬA FILE CỤ THỂ (VD: "Sửa file index.html")
+  // 3. SỬA FILE CỤ THỂ
   const fileQueryMatch = userRequest.match(/(sửa|fix|check|kiểm tra)\s+(file|lính)\s+(.+)/i);
   if (fileQueryMatch && fileNames.length > 0) {
     const query = fileQueryMatch[3].trim();
@@ -354,26 +353,51 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 }
 
 // ============================================================
-// CÁC HÀM XỬ LÝ PROMPT
+// PROMPT REVIEW
 // ============================================================
 function buildBossReviewMessages({ language, code }) {
   return [
-    { role: "system", content: "Bạn là Chuyên gia Kiểm thử (QA). Tìm LỖI LOGIC thực sự. Nếu không có lỗi, CHỈ trả về: NO_LOGIC_ERROR. Cấm bịa lỗi." },
+    { 
+      role: "system", 
+      content: "Bạn là Chuyên gia Kiểm thử (QA). Bạn phải tìm CẢ lỗi cú pháp (nếu có) và lỗi logic trong code.\n" +
+               "Nếu không có lỗi gì, CHỈ trả về: NO_LOGIC_ERROR. Cấm bịa lỗi.\n" +
+               "Nếu có lỗi cú pháp, hãy chỉ rõ ra." 
+    },
     { role: "user", content: `Ngôn ngữ: ${language}\n\nCode:\n\`\`\`${language}\n${code}\n\`\`\`` }
   ];
 }
 
+// ============================================================
+// PROMPT FIX (TỔNG HỢP VÀ SỬA CẢ 2)
+// ============================================================
 function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, language }) {
   let errorText = "";
-  if (sandboxError) errorText += `- Lỗi cú pháp: ${sandboxError}\n`;
-  if (logicError) errorText += `- Lỗi logic: ${logicError}\n`;
+  if (sandboxError) errorText += `🚨 **Lỗi cú pháp/runtime:**\n${sandboxError}\n\n`;
+  if (logicError) errorText += `🧠 **Lỗi logic:**\n${logicError}\n\n`;
 
   return [
-    { role: "system", content: "Bạn là BOSS. Sửa code dựa trên lỗi. Trả về TOÀN BỘ CODE trong ```<lang>...```." },
-    { role: "user", content: `DANH SÁCH LỖI:\n${errorText}\n\nCode:\n\`\`\`${language}\n${failedCode}\n\`\`\`` }
+    { 
+      role: "system", 
+      content: "Bạn là BOSS. Bạn phải sửa code dựa trên DANH SÁCH TỔNG HỢP CÁC LỖI được cung cấp.\n" +
+               "YÊU CẦU BẮT BUỘC:\n" +
+               "1. Phải sửa TẤT CẢ các lỗi (cả cú pháp và logic) trong CÙNG MỘT LẦN TRẢ VỀ.\n" +
+               "2. Không được chỉ sửa lỗi cú pháp rồi bỏ qua lỗi logic.\n" +
+               "3. KHÔNG viết lại từ đầu. Trả về TOÀN BỘ CODE trong ```<ngôn ngữ>...```."
+    },
+    {
+      role: "user",
+      content: [
+        "DANH SÁCH TỔNG HỢP LỖI CẦN SỬA:", errorText, "",
+        "Code hiện tại:", "```" + language, failedCode, "```", "",
+        "Hãy sửa TẤT CẢ và trả về TOÀN BỘ CODE."
+      ].join("\n"),
+    },
   ];
 }
 
+// ============================================================
+// CÁC HÀM XỬ LÝ PROMPT KHÁC
+// ============================================================
 function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
   const messages = [
     { role: "system", content: `Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'.` }
@@ -515,47 +539,8 @@ router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, 
   } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
 });
 
-router.post("/fix-continue", async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
-    const conversationId = req.body?.conversationId;
-    if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" });
-    
-    const latest = await getLatestCodeArtifact(conversationId);
-    if (!latest || !latest.files) return res.status(400).json({ ok: false, message: "Không có dự án để sửa." });
-
-    const projectFiles = latest.files;
-    const currentVersion = latest.version || 1;
-    const fileNames = Object.keys(projectFiles);
-    if (fileNames.length === 0) return res.status(400).json({ ok: false, message: "Dự án rỗng." });
-
-    const targetFile = fileNames[0];
-    const lang = targetFile.split('.').pop();
-    const originalCode = projectFiles[targetFile];
-    
-    const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: originalCode, currentVersion, signal: null });
-    
-    if (fixResult.ok) {
-      projectFiles[targetFile] = fixResult.code;
-      try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
-      
-      const hasChanged = fixResult.code !== originalCode;
-      const statusMsg = hasChanged 
-        ? `✅ Đã sửa xong file \`${targetFile}\`.`
-        : `✅ File \`${targetFile}\` đã kiểm tra, không có lỗi.`;
-
-      const finalText = `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``;
-      const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } });
-      return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } });
-    } else {
-      const delivered = await traKetQuaChoUser({ userId, conversationId, text: `⚠ Còn lỗi: ${fixResult.error}`, meta: { action: "resume-fail" } });
-      return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } });
-    }
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
-});
-
 // Các route khác giữ nguyên
+router.post("/fix-continue", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const conversationId = req.body?.conversationId; if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" }); const latest = await getLatestCodeArtifact(conversationId); if (!latest || !latest.files) return res.status(400).json({ ok: false, message: "Không có dự án để sửa." }); const projectFiles = latest.files; const currentVersion = latest.version || 1; const fileNames = Object.keys(projectFiles); if (fileNames.length === 0) return res.status(400).json({ ok: false, message: "Dự án rỗng." }); const targetFile = fileNames[0]; const lang = targetFile.split('.').pop(); const originalCode = projectFiles[targetFile]; const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: originalCode, currentVersion, signal: null }); if (fixResult.ok) { projectFiles[targetFile] = fixResult.code; try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {} const hasChanged = fixResult.code !== originalCode; const statusMsg = hasChanged ? `✅ Đã sửa xong file \`${targetFile}\`.` : `✅ File \`${targetFile}\` đã kiểm tra, không có lỗi.`; const finalText = `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``; const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } else { const delivered = await traKetQuaChoUser({ userId, conversationId, text: `⚠ Còn lỗi: ${fixResult.error}`, meta: { action: "resume-fail" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.post("/conversations", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { projectId = null, title = null } = req.body || {}; const convo = await createConversation({ userId, projectId, title }); return res.json({ ok: true, conversation: { ...convo, id: String(convo._id) } }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.get("/conversations/:conversationId/messages", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { conversationId } = req.params; const convo = await getConversation(userId, conversationId); if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" }); const raw = await listMessages(conversationId); const items = await Promise.all(raw.map(attachFilesToMessage)); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.get("/conversations/recent", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const items = await listRecentConversations(userId, {}); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
