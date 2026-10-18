@@ -305,7 +305,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     const webContext = web.ok ? formatWebResults(web.results) : "";
     const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
     const finalRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: finalMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
-    return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web.`, meta: { action: "web" } };
+    return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web. ${web.error || ""}`, meta: { action: "web" } };
   }
 
   if (parsed.type === "tool" && parsed.tool === "delegate_soldier") {
@@ -344,6 +344,63 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   }
 
   return { ok: true, text: parsed.text || bossRes.text, meta: { action: "reply-fallback" } };
+}
+
+// ============================================================
+// PROMPT BOSS — CÓ ĐỦ 2 TOOL (web + lính)
+// ============================================================
+function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "Bạn là Rồng Thần — BOSS, trợ lý AI thông minh như ChatGPT.\n" +
+        "Dự án hiện có các file: " + (fileNames.join(", ") || "Chưa có file nào") + ".\n" +
+        "\n" +
+        "BẠN CÓ 2 TOOL:\n" +
+        "\n" +
+        "1. 'delegate_soldier' — giao việc cho lính (viết code, viết văn, sửa code):\n" +
+        "   Dùng khi User muốn tạo code mới, viết bài dài, hoặc sửa code.\n" +
+        "\n" +
+        "2. 'search_web' — tra cứu internet:\n" +
+        "   Dùng khi cần tin tức mới, thông tin thời sự, giá cả, sự kiện gần đây,\n" +
+        "   hoặc BẤT CỨ gì bạn không chắc chắn / không có trong kiến thức huấn luyện.\n" +
+        "   KHÔNG được nói 'tôi không truy cập được web' — bạn CÓ tool này, hãy gọi nó.\n" +
+        "\n" +
+        "CÁCH GỌI TOOL — trả về DUY NHẤT JSON:\n" +
+        "  {\"tool\": \"search_web\", \"args\": {\"query\": \"từ khóa cần tra\"}}\n" +
+        "  {\"tool\": \"delegate_soldier\", \"args\": {\"taskType\": \"code|bulk|fix-code\", \"goal\": \"mô tả nhiệm vụ\", \"requirements\": [], \"constraints\": [], \"expectedOutput\": \"\"}}\n" +
+        "\n" +
+        "Khi chat bình thường (chào hỏi, hỏi đáp, tư vấn) → trả TEXT tự nhiên, KHÔNG bọc JSON.\n" +
+        "KHÔNG dùng LaTeX hay $$. Chỉ trả JSON khi thực sự gọi tool."
+    }
+  ];
+  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
+  messages.push({ role: "user", content: userRequest });
+  return messages;
+}
+
+// ============================================================
+// PROMPT SAU KHI TRA WEB
+// ============================================================
+function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
+  const messages = [
+    {
+      role: "system",
+      content:
+        "Bạn là Rồng Thần. Vừa tra web xong.\n" +
+        "Đọc dữ liệu → trả lời User tự nhiên bằng tiếng Việt.\n" +
+        "KHÔNG nhắc 'công cụ', 'tra web'.\n" +
+        "KHÔNG dùng LaTeX hay $$.\n" +
+        "Trích nguồn URL nếu có."
+    }
+  ];
+  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
+  messages.push({
+    role: "user",
+    content: ["Yêu cầu của User:", userRequest, "", "Dữ liệu tra cứu:", webContext || "(không có)", "", "Trả lời User dựa trên dữ liệu trên."].join("\n")
+  });
+  return messages;
 }
 
 // ============================================================
@@ -396,24 +453,8 @@ function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, langua
 }
 
 // ============================================================
-// CÁC HÀM XỬ LÝ PROMPT KHÁC
+// HÀM PHỤ
 // ============================================================
-function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
-  const messages = [
-    { role: "system", content: `Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'.` }
-  ];
-  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
-  messages.push({ role: "user", content: userRequest });
-  return messages;
-}
-
-function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
-  const messages = [{ role: "system", content: "Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User." }];
-  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
-  messages.push({ role: "user", content: ["Yêu cầu:", userRequest, "", "Dữ liệu web:", webContext || "(không có)"].join("\n") });
-  return messages;
-}
-
 function parseBossOutput(text) {
   if (!text || typeof text !== "string") return { type: "text", text: "(Không có nội dung)" };
   let s = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
@@ -495,7 +536,9 @@ function mergeCodeChunks(codeChunks, language) {
   return codeChunks.join("\n\n");
 }
 
+// ============================================================
 // ROUTE
+// ============================================================
 router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, res, (err) => { if (err) { return res.status(400).json({ ok: false, message: "Lỗi upload" }); } next(); }); }, async (req, res) => {
   try {
     const userId = getUserId(req);
