@@ -1,5 +1,11 @@
 // server/tieu-nao/danh-sach-ung-vien.js
 // Nhiệm vụ: Danh sách model ứng viên của Tiểu Não (Lính).
+// =========================================================
+// [CẬP NHẬT 18/10/2026]: 
+// - XÓA: Gemini 2.5 Pro, Gemini 3.1 Flash Lite.
+// - XÓA: Toàn bộ Llama 3/4 của Groq.
+// - THÊM MỚI: Poolside Laguna S 2.1, Ling 3.1 Flash.
+// =========================================================
 
 import groq from "../providers/groq.js";
 import gemini from "../providers/gemini.js";
@@ -19,6 +25,9 @@ export const TIEU_NAO_TASK = {
   BULK: "bulk",
 };
 
+// =========================================================
+// DANH SÁCH MODEL ĐÃ ĐƯỢC LÀM SẠCH
+// =========================================================
 const UNG_CU_VIEN_1_VA_2 = [
   // ===== ỨNG CỬ VIÊN 1 (LÍNH chuyên code & xử lý) =====
   { name: "cohere/north-mini-code:free", provider: "openrouter", priority: 1 },
@@ -27,7 +36,7 @@ const UNG_CU_VIEN_1_VA_2 = [
   { name: "openai/gpt-oss-120b", provider: "groq", priority: 4 },
 
   // ===== ỨNG CỬ VIÊN 2 (Dự phòng) =====
-  // Gemini
+  // Gemini (Đã xóa 2.5 Pro và 3.1 Lite)
   { name: "gemini-3.7-flash", provider: "gemini", priority: 10 },
   { name: "gemini-3.6-flash", provider: "gemini", priority: 11 },
   { name: "gemini-3.5-flash", provider: "gemini", priority: 12 },
@@ -35,22 +44,26 @@ const UNG_CU_VIEN_1_VA_2 = [
   { name: "gemini-2.5-flash", provider: "gemini", priority: 14 },
   { name: "gemini-2.5-flash-lite", provider: "gemini", priority: 15 },
 
-  // Groq
+  // Groq (Đã xóa toàn bộ Llama, Compound, Kimi)
   { name: "openai/gpt-oss-20b", provider: "groq", priority: 20 },
   { name: "qwen/qwen3.8-27b", provider: "groq", priority: 21 },
   { name: "openai/gpt-oss-safeguard-20b", provider: "groq", priority: 22 },
 
-  // OpenRouter
-  { name: "poolside/laguna-s-2.1:free", provider: "openrouter", priority: 30 },
-  { name: "inclusionai/ling-3.1-flash", provider: "openrouter", priority: 31 },
+  // OpenRouter (Đã xóa qwen3-coder, deepseek, Llama)
+  { name: "poolside/laguna-s-2.1:free", provider: "openrouter", priority: 30 }, // MỚI
+  { name: "inclusionai/ling-3.1-flash", provider: "openrouter", priority: 31 }, // MỚI
   { name: "thinkingmachines/inkling:free", provider: "openrouter", priority: 32 },
   { name: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", priority: 33 },
   { name: "poolside/laguna-xs-2.1:free", provider: "openrouter", priority: 34 },
-  { name: "thinkingmachines/inkling-small:free", provider: "openrouter", priority: 35 },
-  { name: "nvidia/nemotron-3-nano-omni-30b-a3b:free", provider: "openrouter", priority: 36 },
-  { name: "apodex/apodex-1.1-mini:free", provider: "openrouter", priority: 37 },
-  { name: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", priority: 38 },
-  { name: "dots-studio/dots-3-note-preview:free", provider: "openrouter", priority: 39 },
+  { name: "google/gemma-4-31b-it:free", provider: "openrouter", priority: 35 },
+  { name: "qwen/qwen3.8-27b:free", provider: "openrouter", priority: 36 },
+  { name: "thinkingmachines/inkling-small:free", provider: "openrouter", priority: 37 },
+  { name: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", priority: 38 },
+  { name: "nvidia/nemotron-3-nano-omni-30b-a3b:free", provider: "openrouter", priority: 39 },
+  { name: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", priority: 40 },
+  { name: "dots-studio/dots-3-note-preview:free", provider: "openrouter", priority: 41 },
+  { name: "liquid/lfm-2.5-2.6b:free", provider: "openrouter", priority: 42 },
+  { name: "apodex/apodex-1.1-mini:free", provider: "openrouter", priority: 43 },
 ];
 
 export const TIEU_NAO_CANDIDATES = {

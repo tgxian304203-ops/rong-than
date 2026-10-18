@@ -25,11 +25,15 @@ const RANK = {
   "thinkingmachines/inkling:free": 88,
   "nvidia/nemotron-3-super-120b-a12b:free": 85,
   "poolside/laguna-xs-2.1:free": 82,
+  "google/gemma-4-31b-it:free": 80,
+  "qwen/qwen3.8-27b:free": 80,
   "thinkingmachines/inkling-small:free": 82,
+  "google/gemma-4-26b-a4b-it:free": 78,
   "nvidia/nemotron-3-nano-omni-30b-a3b:free": 76,
-  "apodex/apodex-1.1-mini:free": 70,
   "nvidia/nemotron-3.5-lightning:free": 78,
   "dots-studio/dots-3-note-preview:free": 72,
+  "liquid/lfm-2.5-2.6b:free": 70,
+  "apodex/apodex-1.1-mini:free": 70,
 };
 
 export function layDiemSucManh(modelName, taskType = null) {
