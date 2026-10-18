@@ -318,7 +318,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     const webContext = web.ok ? formatWebResults(web.results) : "";
     const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
     const finalRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: finalMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
-    return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web. ${web.error || ""}`, meta: { action: "web" } };
+    return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web.`, meta: { action: "web" } };
   }
 
   if (parsed.type === "tool" && parsed.tool === "delegate_soldier") {
