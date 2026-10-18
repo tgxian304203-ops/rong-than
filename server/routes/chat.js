@@ -1,6 +1,6 @@
 // server/routes/chat.js
 // Nhiệm vụ: API chat — BOSS như ChatGPT.
-// Cập nhật: BOSS TỰ SỬA CODE (không qua Lính), set giới hạn 60.000 tokens, fix 3 lỗi logic.
+// Cập nhật: Bắt trọn lệnh "Sửa đi" ở Backend, BOSS tự sửa (không qua Lính), maxTokens 60000.
 
 import express from "express";
 import multer from "multer";
@@ -72,7 +72,6 @@ async function loadConversationHistory(conversationId, limit) {
   try { return await listRecentMessages(conversationId, limit); } catch { return []; }
 }
 
-// [FIX 1] Đảm bảo lỗi luôn là string
 function errString(e) {
   if (typeof e === "string") return e;
   if (e && typeof e.message === "string") return e.message;
@@ -94,15 +93,6 @@ function extractCodeFromRequest(userRequest) {
   return null;
 }
 
-function extractTestSandboxFallback(userRequest, parsed) {
-  if (parsed?.type !== "text") return null;
-  if (typeof parsed?.text !== "string") return null;
-  if (!/"tool"\s*:\s*"test_sandbox"/.test(parsed.text)) return null;
-  const extracted = extractCodeFromRequest(userRequest);
-  if (!extracted) return null;
-  return { type: "tool", tool: "test_sandbox", args: { language: extracted.language, code: extracted.code } };
-}
-
 // ============================================================
 // VÒNG LẶP BOSS TỰ SỬA CODE
 // ============================================================
@@ -121,6 +111,8 @@ async function runBossFixLoop({ userId, conversationId, userRequest, language, c
     await logInfo(`BOSS: Tự sửa vòng ${iteration}`, { userId, conversationId });
 
     const fixMessages = buildBossFixCodeMessages({ userRequest, failedCode: currentCode, stderr: lastError, language });
+    
+    // BOSS gọi với maxTokens 60.000
     const bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: fixMessages, temperature: 0.2, maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS, signal });
 
     if (!bossRes.ok || !bossRes.text) {
@@ -128,31 +120,19 @@ async function runBossFixLoop({ userId, conversationId, userRequest, language, c
       continue;
     }
 
-    let validation = validateCodeOutput(bossRes.text);
-    
-    // [FIX 3] Nếu BOSS trả về text, thử vét code trong đó
-    if (!validation.ok) {
-      const extracted = extractCodeFromRequest(bossRes.text);
-      if (extracted) {
-        validation = { ok: true, code: extracted.code, language: extracted.language };
-      }
-    }
-
+    const validation = validateCodeOutput(bossRes.text);
     if (validation.ok && validation.code) {
       currentCode = validation.code;
       language = validation.language || language;
     } else {
-      lastError = `BOSS trả về text không có code block: ${bossRes.text.slice(0, 200)}...`;
+      lastError = "BOSS không trả về code block hợp lệ.";
       continue;
     }
 
     const testRes = await kiemTraSandbox({ userId, conversationId, language, code: currentCode, testCode: "", signal });
     
     if (testRes.ok) {
-      try { 
-        // [FIX 2] Lưu đúng version
-        await saveArtifact({ userId, conversationId, language, code: currentCode, version: currentVersion + 1 }); 
-      } catch {}
+      try { await saveArtifact({ userId, conversationId, language, code: currentCode, version: currentVersion + 1 }); } catch {}
       return { ok: true, code: currentCode, language, iterations: iteration, sandboxMeta: { status: testRes.status } };
     }
     lastError = errString(testRes.stderr || testRes.error || "Lỗi không rõ");
@@ -180,6 +160,26 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
   } catch {}
 
+  // ============================================================
+  // [FIX LỖI RAW JSON] CHẶN ĐỨNG LỆNH "SỬA ĐI" TỪ USER
+  // ============================================================
+  const isShortFixCommand = /^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa)$/i.test(userRequest.trim());
+  
+  if (currentCode && isShortFixCommand) {
+    await logInfo("BOSS: Tự động kích hoạt sửa code từ lệnh ngắn của User", { userId, conversationId });
+    const fixResult = await runBossFixLoop({ 
+      userId, conversationId, userRequest: "Sửa các lỗi hiện tại", 
+      language: currentCode.language, code: currentCode.code, 
+      initialError: "Người dùng yêu cầu sửa", currentVersion: currentCode.version, signal 
+    });
+    
+    if (fixResult.ok) {
+      return { ok: true, text: `✅ Đã sửa xong các lỗi.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "boss-fixed" } };
+    } else {
+      return { ok: true, text: `⚠ Đã cố gắng sửa nhưng chưa hoàn chỉnh.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "boss-fix-fail" } };
+    }
+  }
+
   await logInfo("BOSS: đọc ngữ cảnh", { userId, conversationId, historyCount: historyCtx.length, hasCode: !!currentCode });
 
   const bossMessages = buildBossMessages({ userRequest, history: historyCtx, currentCode });
@@ -192,13 +192,6 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
   let parsed = parseBossOutput(bossRes.text);
-
-  if (parsed.type === "text") {
-    const fallback = extractTestSandboxFallback(userRequest, parsed);
-    if (fallback) { await logInfo("BOSS: fallback trích code từ userRequest", { userId, conversationId }); parsed = fallback; }
-  }
-
-  await logInfo("BOSS: quyết định", { userId, conversationId, type: parsed.type, tool: parsed.tool || null });
 
   if (parsed.type === "text") return { ok: true, text: parsed.text, meta: { action: "reply" } };
 
@@ -290,7 +283,9 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   return { ok: true, text: parsed.text || bossRes.text, meta: { action: "reply-fallback" } };
 }
 
-// Các hàm prompt (giữ nguyên)
+// ============================================================
+// PROMPT BOSS CHÍNH (Điều phối)
+// ============================================================
 function buildBossMessages({ userRequest, history = [], currentCode = null }) {
   const messages = [
     {
@@ -304,12 +299,12 @@ function buildBossMessages({ userRequest, history = [], currentCode = null }) {
         "QUY TẮC PHÂN BIỆT:\n" +
         "🅰️ KIỂM TRA CODE: User dán code + 'kiểm tra', 'check', 'có lỗi không' -> Gọi tool 'test_sandbox'.\n" +
         "🅱️ LÀM CODE MỚI: User nói 'làm', 'tạo', 'viết' -> Gọi 'delegate_soldier' với taskType='code'.\n" +
-        "🅲 SỬA CODE: User nói 'sửa lỗi', 'fix' -> Gọi 'delegate_soldier' với taskType='fix-code'.\n\n" +
+        "🅲 SỬA CODE: User nói 'sửa', 'fix' -> Hệ thống tự động xử lý, bạn KHÔNG cần gọi tool.\n\n" +
         "CÁCH TRẢ LỜI:\n" +
         "【Chat】→ TEXT tự nhiên.\n" +
         "【Test Sandbox】→ {\"tool\": \"test_sandbox\", \"args\": {\"language\": \"html|javascript|python\"}}\n" +
         "【Tra web】→ {\"tool\": \"search_web\", \"args\": {\"query\": \"...\"}}\n" +
-        "【Giao lính】→ {\"tool\": \"delegate_soldier\", \"args\": {\"taskType\": \"code|fix-code|bulk|summary\", \"goal\": \"...\", \"requirements\": [], \"constraints\": [], \"expectedOutput\": \"...\"}}\n\n" +
+        "【Giao lính】→ {\"tool\": \"delegate_soldier\", \"args\": {\"taskType\": \"code|bulk|summary\", \"goal\": \"...\", \"requirements\": [], \"constraints\": [], \"expectedOutput\": \"...\"}}\n\n" +
         "KHÔNG dùng LaTeX hay $$. Chỉ trả JSON khi gọi tool.",
     },
   ];
