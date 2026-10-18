@@ -1,5 +1,6 @@
 // server/db/codeArtifacts.js
 // Nhiệm vụ: Collection codeArtifacts — hỗ trợ lưu trữ đa tệp (Virtual File System).
+// SỬA LỖI: Khôi phục hàm getLatest() để tương thích với file quan-ly-phien-ban.js
 
 import { ObjectId } from "mongodb";
 
@@ -11,28 +12,30 @@ function col() {
   return db.collection(COL_NAME);
 }
 
-/**
- * Lưu phiên bản code mới. Hỗ trợ lưu 1 hoặc nhiều file.
- * @param {object} p
- * @param {string} p.userId
- * @param {string} p.conversationId
- * @param {object} p.files - Dạng { "index.html": "code...", "app.js": "code..." }
- * @param {number} p.version
- * @param {string} [p.taskId]
- */
 export async function saveArtifact({
   userId,
   conversationId,
-  files,
+  files,        // Schema mới
+  language,     // Tương thích ngược
+  code,         // Tương thích ngược
   version = 1,
   taskId = null,
 }) {
   const now = new Date();
+  
+  // Nếu file cũ gọi hàm này mà truyền language & code, ta tự gộp thành object files
+  let finalFiles = files;
+  if (!finalFiles && language && code) {
+    finalFiles = { [`file.${language}`]: code };
+  }
+
   const doc = {
     userId,
     conversationId: String(conversationId),
     taskId: taskId ? String(taskId) : null,
-    files, // Lưu toàn bộ danh sách file
+    files: finalFiles || {},
+    language: language || null,
+    code: code || null,
     version,
     createdAt: now,
   };
@@ -47,6 +50,14 @@ export async function listByConversation(conversationId) {
     .toArray();
 }
 
+// SỬA LỖI: Khôi phục hàm này để server không bị crash khi start
+export async function getLatest(conversationId, language) {
+  return col().findOne(
+    { conversationId: String(conversationId), language },
+    { sort: { version: -1 } }
+  );
+}
+
 export async function getLatestAny(conversationId) {
   return col().findOne(
     { conversationId: String(conversationId) },
@@ -54,8 +65,8 @@ export async function getLatestAny(conversationId) {
   );
 }
 
-export async function getNextVersion(conversationId) {
-  const latest = await getLatestAny(conversationId);
+export async function getNextVersion(conversationId, language) {
+  const latest = await getLatest(conversationId, language);
   return latest ? latest.version + 1 : 1;
 }
 
