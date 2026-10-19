@@ -406,29 +406,28 @@ function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, langua
 // ============================================================
 // CÁC HÀM XỬ LÝ PROMPT KHÁC
 // ============================================================
-// ĐÃ CẬP NHẬT: Truyền nội dung code để BOSS hiểu ngữ cảnh + Prompt chuẩn ChatGPT
+// ĐÃ TỐI GIẢN: Ép định dạng nghiêm ngặt để chạy tốt trên cả model nhỏ (Groq/OpenRouter)
 function buildBossMessages({ userRequest, history = [], fileNames = [], currentCode = null }) {
   const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
   const currentYear = new Date().getFullYear();
   
-  let systemPrompt = `Hôm nay là ${today} (năm ${currentYear}). Bạn là Rồng Thần — BOSS, một trợ lý AI thông minh, hoạt động tự nhiên như ChatGPT.\n\n`;
-  systemPrompt += `Dự án hiện tại đang có các file: ${fileNames.join(", ") || "Chưa có file nào"}.\n\n`;
-  
-  // Cung cấp nội dung code để BOSS "nhìn" thấy
+  let systemPrompt = `Bạn là Rồng Thần — BOSS. Hôm nay: ${today} (${currentYear}).
+File dự án: ${fileNames.join(", ") || "Chưa có"}.
+
+`;
   if (currentCode) {
-    systemPrompt += `DƯỚI ĐÂY LÀ NỘI DUNG CODE HIỆN TẠI (Hãy đọc kỹ để hiểu ngữ cảnh):\n\`\`\`\n${String(currentCode).slice(0, 4000)}\n\`\`\`\n\n`;
+    systemPrompt += `CODE HIỆN TẠI:\n\`\`\`\n${String(currentCode).slice(0, 3000)}\n\`\`\`\n\n`;
   }
 
-  systemPrompt += `QUY TẮC GIAO TIẾP:
-1. Nếu User chỉ chào hỏi, tâm sự, hoặc hỏi thông tin bình thường -> Hãy trả lời bằng TEXT tự nhiên, thân thiện. TUYỆT ĐỐI KHÔNG gọi tool.
-2. Nếu User muốn tạo code mới, viết văn, hoặc YÊU CẦU SỬA code -> Gọi tool 'delegate_soldier' bằng JSON.
-3. Nếu User hỏi thông tin thời gian thực (giá vàng, thời tiết, tin tức) -> Gọi tool 'search_web' bằng JSON.
-
-CÁCH GỌI TOOL (Trả về DUY NHẤT JSON):
-- Tra web: {"tool":"search_web","args":{"query":"... ${currentYear}"}}
-- Giao việc: {"tool":"delegate_soldier","args":{"taskType":"code|bulk|fix-code","goal":"...","requirements":[],"constraints":[],"expectedOutput":""}}
-
-LƯU Ý: KHÔNG sử dụng bảng Markdown (dạng |...|); nếu cần liệt kê, dùng gạch đầu dòng (-) và xuống dòng.`;
+  // Sử dụng gạch đầu dòng và format cực kỳ rõ ràng cho LLM nhỏ
+  systemPrompt += `QUY TẮC BẮT BUỘC:
+- CHỈ ĐƯỢC PHÉP trả lời bằng 1 trong 2 dạng: TEXT thường hoặc JSON. KHÔNG giải thích dông dài.
+- KHÔNG dùng bảng Markdown (|...|).
+- NẾU NGƯỜI DÙNG CHÀO HỎI, HỎI ĐÁP BÌNH THƯỜNG: Trả về TEXT.
+- NẾU CẦN TẠO/SỬA CODE: Trả về đúng JSON (không bọc markdown):
+{"tool":"delegate_soldier","args":{"taskType":"code|fix-code|bulk","goal":"mô tả chi tiết","requirements":[],"constraints":[]}}
+- NẾU CẦN TRA CỨU THỜI GIAN THỰC (giá vàng, tin tức): Trả về đúng JSON (không bọc markdown):
+{"tool":"search_web","args":{"query":"từ khóa + ${currentYear}"}}`;
 
   const messages = [{ role: "system", content: systemPrompt }];
   
