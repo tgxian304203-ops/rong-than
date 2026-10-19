@@ -1,5 +1,5 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — BOSS như ChatGPT. (Đã bỏ Sandbox)
+// Nhiệm vụ: API chat — BOSS như ChatGPT. (Tối ưu Database đa file + Prompt)
 
 import express from "express";
 import multer from "multer";
@@ -11,6 +11,7 @@ import {
 import { listMessages, listRecentMessages } from "../db/messages.js";
 import { saveAttachment, listByMessage as listAttachmentsByMessage } from "../db/attachments.js";
 import { getLatestAny as getLatestCodeArtifact, saveArtifact } from "../db/codeArtifacts.js";
+import { getAllFiles, upsertFile } from "../db/projectFiles.js"; // IMPORT MỚI
 
 import { nhanYeuCau as gwNhanYeuCau } from "../gateway/nhan-yeu-cau.js";
 import { chuyenYeuCauChoBoss } from "../gateway/chuyen-yeu-cau-cho-boss.js";
@@ -38,20 +39,11 @@ const BOSS_MAX_OUTPUT_TOKENS = 32768;
 const BOSS_FIX_MAX_OUTPUT_TOKENS = 60000;
 const MAX_FIX_ITERATIONS = 5;
 
-// ============================================================
-// KHAI BÁO TOOLS CHO BOSS (NATIVE TOOL CALLING)
-// ============================================================
 const BOSS_TOOLS = [
   {
     name: "search_web",
-    description: "Tra cứu internet để lấy thông tin thời gian thực (tin tức, giá cả, thời tiết, sự kiện). Dùng khi cần dữ liệu mới.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Từ khóa tìm kiếm (nên kèm năm hiện tại)." }
-      },
-      required: ["query"]
-    }
+    description: "Tra cứu internet để lấy thông tin thời gian thực (tin tức, giá cả, thời tiết, sự kiện).",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
   },
   {
     name: "delegate_soldier",
@@ -59,51 +51,36 @@ const BOSS_TOOLS = [
     parameters: {
       type: "object",
       properties: {
-        taskType: { type: "string", enum: ["code", "fix-code", "bulk"], description: "Loại nhiệm vụ." },
-        goal: { type: "string", description: "Mô tả chi tiết mục tiêu cần làm." },
-        requirements: { type: "array", items: { type: "string" }, description: "Yêu cầu cụ thể." }
+        taskType: { type: "string", enum: ["code", "fix-code", "bulk"] },
+        goal: { type: "string" },
+        requirements: { type: "array", items: { type: "string" } }
       },
       required: ["taskType", "goal"]
     }
   }
 ];
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: LIMITS.MAX_UPLOAD_BYTES, files: LIMITS.MAX_ATTACHMENTS_PER_MESSAGE },
-});
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITS.MAX_UPLOAD_BYTES, files: LIMITS.MAX_ATTACHMENTS_PER_MESSAGE } });
 
-function getUserId(req) {
-  const v = req.headers["x-user-id"];
-  return v ? String(v) : null;
-}
+function getUserId(req) { return req.headers["x-user-id"] ? String(req.headers["x-user-id"]) : null; }
 
 async function attachFilesToMessage(msg) {
   if (!msg) return msg;
   try {
     const atts = await listAttachmentsByMessage(String(msg._id));
-    const mapped = atts.map((a) => ({
-      id: String(a._id), name: a.name, type: a.type, size: a.size, url: a.url || "", dataUrl: a.dataUrl || "",
-    }));
+    const mapped = atts.map((a) => ({ id: String(a._id), name: a.name, type: a.type, size: a.size, url: a.url || "", dataUrl: a.dataUrl || "" }));
     return { ...msg, id: String(msg._id), attachments: mapped };
-  } catch {
-    return { ...msg, id: String(msg._id), attachments: [] };
-  }
+  } catch { return { ...msg, id: String(msg._id), attachments: [] }; }
 }
 
 async function loadConversationHistory(conversationId, limit) {
   try { return await listRecentMessages(conversationId, limit); } catch { return []; }
 }
 
-function errString(e) {
-  if (typeof e === "string") return e;
-  if (e && typeof e.message === "string") return e.message;
-  try { return JSON.stringify(e); } catch { return String(e); }
-}
+function errString(e) { return typeof e === "string" ? e : (e?.message || String(e)); }
 
 function extractCodeFromRequest(userRequest) {
   if (!userRequest || typeof userRequest !== "string") return null;
-  
   const blockMatch = userRequest.match(/```([a-zA-Z0-9+\-#.]*)(?:\s+([a-zA-Z0-9_\-.]+))?\n([\s\S]*?)```/);
   if (blockMatch) {
     const lang = (blockMatch[1] || "").toLowerCase().trim() || "html";
@@ -111,7 +88,6 @@ function extractCodeFromRequest(userRequest) {
     const code = (blockMatch[3] || "").trim();
     if (code) return { language: lang, filename: explicitName || `temp_code.${lang}`, hasExplicitName: !!explicitName, code };
   }
-  
   const htmlDoctype = userRequest.match(/(<!DOCTYPE[\s\S]*<\/html>)/i);
   if (htmlDoctype) return { language: "html", filename: "temp_code.html", hasExplicitName: false, code: htmlDoctype[1].trim() };
   return null;
@@ -130,9 +106,6 @@ function getFileFromProject(filesObj, filenameOrIndex) {
   return null;
 }
 
-// ============================================================
-// VÒNG LẶP SỬA CODE (ĐÃ BỎ SANDBOX - CHỈ DÙNG BOSS REVIEW)
-// ============================================================
 async function runStrictFixLoop({ userId, conversationId, language, initialCode, currentVersion = 0, signal }) {
   let currentCode = initialCode;
   let iteration = 0;
@@ -140,30 +113,16 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
 
   while (iteration < MAX_FIX_ITERATIONS) {
     iteration++;
-
-    // BƯỚC 1: BOSS REVIEW (Cú pháp + Logic)
-    const reviewMessages = buildBossReviewMessages({ language, code: currentCode });
-    const reviewRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: reviewMessages, temperature: 0.1, maxTokens: 4096, signal });
-    
+    const reviewRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: buildBossReviewMessages({ language, code: currentCode }), temperature: 0.1, maxTokens: 4096, signal });
     let logicError = "";
-    if (reviewRes.ok && reviewRes.text) {
-      const text = reviewRes.text.trim();
-      if (!text.includes("NO_LOGIC_ERROR")) logicError = text;
-    }
+    if (reviewRes.ok && reviewRes.text && !reviewRes.text.includes("NO_LOGIC_ERROR")) logicError = reviewRes.text;
 
-    // BƯỚC 2: NẾU SẠCH LỖI THÌ TRẢ VỀ
-    if (!logicError) {
-      return { ok: true, code: currentCode, language };
-    }
+    if (!logicError) return { ok: true, code: currentCode, language };
 
-    // BƯỚC 3 & 4: TỔNG HỢP LỖI VÀ BOSS SỬA
     let finalLogicError = logicError;
-    if (noChangeCount > 0) {
-      finalLogicError += `\n\n[HỆ THỐNG CẢNH BÁO]: Lần trước bạn KHÔNG HỀ SỬA GÌ. Lần này BẮT BUỘC phải sửa đổi code!`;
-    }
+    if (noChangeCount > 0) finalLogicError += `\n\n[HỆ THỐNG CẢNH BÁO]: Lần trước bạn KHÔNG HỀ SỬA GÌ. Lần này BẮT BUỘC phải sửa!`;
 
-    const fixMessages = buildBossFixCodeMessages({ logicError: finalLogicError, failedCode: currentCode, language });
-    const fixRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: fixMessages, temperature: 0.1, maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS, signal });
+    const fixRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: buildBossFixCodeMessages({ logicError: finalLogicError, failedCode: currentCode, language }), temperature: 0.1, maxTokens: BOSS_FIX_MAX_OUTPUT_TOKENS, signal });
 
     if (fixRes.ok && fixRes.text) {
       const validation = validateCodeOutput(fixRes.text);
@@ -182,9 +141,6 @@ async function runStrictFixLoop({ userId, conversationId, language, initialCode,
   return { ok: false, error: `Đã thử sửa ${MAX_FIX_ITERATIONS} lần nhưng vẫn còn lỗi.`, code: currentCode, language };
 }
 
-// ============================================================
-// PIPELINE BOSS
-// ============================================================
 async function runBossPipeline({ userId, conversationId, userRequest, userLabel, signal }) {
   const recv = await bossNhanYeuCau({ userId, conversationId, userRequest, userLabel });
   if (!recv.ok) return { ok: false, error: recv.error };
@@ -193,51 +149,50 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   let currentVersion = 0;
   try {
     const artifact = await getLatestCodeArtifact(conversationId);
-    if (artifact && artifact.files) {
-      projectFiles = artifact.files;
-      currentVersion = artifact.version || 1;
-    }
+    currentVersion = artifact?.version || 1;
+    projectFiles = await getAllFiles({ conversationId }); // LẤY TỪ BẢNG MỚI
   } catch {}
 
   const fileNames = Object.keys(projectFiles);
   const extractedFromUser = extractCodeFromRequest(userRequest);
 
-  // 1. NGƯỜI DÙNG GỬI CODE
+  // 1. USER GỬI CODE
   if (extractedFromUser) {
     const reviewRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: buildBossReviewMessages({ language: extractedFromUser.language, code: extractedFromUser.code }), temperature: 0.1, maxTokens: 4096, signal });
-    
     let logicError = "";
     if (reviewRes.ok && reviewRes.text && !reviewRes.text.includes("NO_LOGIC_ERROR")) logicError = reviewRes.text;
     const hasError = !!logicError;
 
     if (extractedFromUser.hasExplicitName) {
       projectFiles[extractedFromUser.filename] = extractedFromUser.code;
-      try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
-      
-      if (hasError) return { ok: true, text: `✅ Đã lưu file \`${extractedFromUser.filename}\`.\n⚠ Lưu ý: File này có thể còn lỗi. Bạn có muốn tôi sửa không?`, meta: { action: "save-with-error" } };
+      try { 
+        await upsertFile({ userId, conversationId, filename: extractedFromUser.filename, content: extractedFromUser.code, language: extractedFromUser.language });
+        await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); 
+      } catch {}
+      if (hasError) return { ok: true, text: `✅ Đã lưu file \`${extractedFromUser.filename}\`.\n⚠ File này có thể còn lỗi. Bạn có muốn tôi sửa không?`, meta: { action: "save-with-error" } };
       return { ok: true, text: `✅ Đã lưu file \`${extractedFromUser.filename}\` thành công.`, meta: { action: "save-pass" } };
     } else {
       projectFiles[extractedFromUser.filename] = extractedFromUser.code;
-      try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
-
+      try { 
+        await upsertFile({ userId, conversationId, filename: extractedFromUser.filename, content: extractedFromUser.code, language: extractedFromUser.language });
+        await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); 
+      } catch {}
       if (!hasError) return { ok: true, text: `✅ Code hoàn toàn chính xác.`, meta: { action: "test-pass" } };
-      
-      let errorMsg = "Tôi đã kiểm tra và phát hiện vấn đề:\n\n";
-      if (logicError) errorMsg += `🧠 **Lỗi:**\n${logicError}\n\n`;
-      return { ok: true, text: errorMsg + `Bạn có muốn tôi sửa không?`, meta: { action: "test-fail" } };
+      return { ok: true, text: `Tôi phát hiện vấn đề:\n\n🧠 **Lỗi:**\n${logicError}\n\nBạn có muốn tôi sửa không?`, meta: { action: "test-fail" } };
     }
   }
 
   // 2. LỆNH "SỬA ĐI"
-  const isShortFixCommand = /^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa|fix hết|đồng ý)$/i.test(userRequest.trim());
-  if (isShortFixCommand && fileNames.length > 0) {
+  if (/^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa|fix hết|đồng ý)$/i.test(userRequest.trim()) && fileNames.length > 0) {
     const latestFile = fileNames.find(f => f.startsWith("temp_code")) || fileNames[0];
     const lang = latestFile.split('.').pop();
     const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: projectFiles[latestFile], currentVersion, signal });
-
     if (fixResult.ok) {
       projectFiles[latestFile] = fixResult.code;
-      try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
+      try { 
+        await upsertFile({ userId, conversationId, filename: latestFile, content: fixResult.code, language: lang });
+        await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); 
+      } catch {}
       return { ok: true, text: `✅ Đã sửa xong hoàn toàn.\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``, meta: { action: "fixed" } };
     } else return { ok: true, text: `⚠ Đã cố gắng sửa nhưng thất bại: ${fixResult.error}`, meta: { action: "fix-fail" } };
   }
@@ -248,14 +203,15 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     const query = fileQueryMatch[3].trim();
     const targetFile = getFileFromProject(projectFiles, query);
     if (!targetFile) return { ok: true, text: `❌ Không tìm thấy file "${query}". Các file hiện có:\n${fileNames.join("\n")}`, meta: { action: "file-not-found" } };
-
     const lang = targetFile.filename.split('.').pop();
     const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: targetFile.code, currentVersion, signal });
-
     if (fixResult.ok) {
       projectFiles[targetFile.filename] = fixResult.code;
-      try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
-      const statusMsg = fixResult.code !== targetFile.code ? `✅ Đã kiểm tra và sửa xong lỗi trong file \`${targetFile.filename}\`.` : `✅ File \`${targetFile.filename}\` không có lỗi.`;
+      try { 
+        await upsertFile({ userId, conversationId, filename: targetFile.filename, content: fixResult.code, language: lang });
+        await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); 
+      } catch {}
+      const statusMsg = fixResult.code !== targetFile.code ? `✅ Đã sửa xong file \`${targetFile.filename}\`.` : `✅ File \`${targetFile.filename}\` không có lỗi.`;
       return { ok: true, text: `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``, meta: { action: "file-fixed" } };
     } else return { ok: true, text: `⚠ File \`${targetFile.filename}\` còn lỗi: ${fixResult.error}`, meta: { action: "file-fail" } };
   }
@@ -265,17 +221,16 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
      return { ok: true, text: `📁 Dự án hiện có ${fileNames.length} file:\n${fileNames.map((f, i) => `${i+1}. ${f}`).join("\n")}`, meta: { action: "list-files" } };
   }
 
-  // 5. CHAT BÌNH THƯỜNG / TẠO CODE MỚI (NATIVE TOOL CALLING)
+  // 5. CHAT BÌNH THƯỜNG / TẠO CODE MỚI
   const history = await loadConversationHistory(conversationId, HISTORY_FOR_BOSS);
   const historyCtx = history.slice(0, -1);
+  // Nếu dự án có nhiều file, chỉ gửi file đầu tiên (hoặc file user yêu cầu) để tránh quá tải token
   const currentCode = fileNames.length > 0 ? projectFiles[fileNames[0]] : null;
 
   const bossMessages = buildBossMessages({ userRequest, history: historyCtx, fileNames, currentCode });
   
   let bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: bossMessages, tools: BOSS_TOOLS, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
-  if (!bossRes.ok) {
-    bossRes = await goiBossMoi({ userId, conversationId, oldSession: null, messages: bossMessages, tools: BOSS_TOOLS, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
-  }
+  if (!bossRes.ok) bossRes = await goiBossMoi({ userId, conversationId, oldSession: null, messages: bossMessages, tools: BOSS_TOOLS, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
   if (!bossRes.ok) return { ok: false, error: bossRes.error || "BOSS không trả lời được" };
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
@@ -288,11 +243,9 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       let query = args.query || userRequest;
       const currentYear = new Date().getFullYear();
       if (!/\b20\d{2}\b/.test(query)) query = `${query} ${currentYear}`;
-      
       const web = await traWeb({ userId, conversationId, query, signal });
       const webContext = web.ok ? formatWebResults(web.results) : "";
       const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
-      
       const finalRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: finalMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
       return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web.`, meta: { action: "web" } };
     }
@@ -305,13 +258,11 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       if (requestTokens > LIMITS.CONTEXT_TOKEN_GEMINI_MAX) return await runChunkedDelegate({ userId, conversationId, userRequest, bossSessionId, historyCtx, history, signal });
 
       const format = { taskType, goal, requirements: args.requirements || [], constraints: [], expectedOutput: "", needCode: taskType === "code", currentCode: null, isModify: false, subtasks: [], risks: [], qualityCriteria: [] };
-      
       const giao = await giaoFormat({ userId, conversationId, bossSessionId, format, tokens: countTokens(userRequest) });
       if (!giao.ok) return { ok: false, error: giao.error };
       
       const soldierMessages = buildSoldierMessages({ format, history: history.slice(-HISTORY_FOR_BOSS), userRequest });
       const linh = await goiLinh({ userId, taskId: giao.taskId, taskType: giao.taskType, messages: soldierMessages, payload: format, temperature: 0.3, maxTokens: 8192, signal });
-      
       if (!linh.ok) return { ok: false, error: linh.error || "Lính không hoàn thành" };
       
       const validation = validateCodeOutput(linh.text);
@@ -320,12 +271,14 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       const fixResult = await runStrictFixLoop({ userId, conversationId, language: validation.language, initialCode: validation.code, currentVersion, signal });
 
       if (fixResult.ok) {
-        projectFiles[`new_code.${validation.language}`] = fixResult.code;
-        try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {}
+        const newFilename = `new_code.${validation.language}`;
+        projectFiles[newFilename] = fixResult.code;
+        try { 
+          await upsertFile({ userId, conversationId, filename: newFilename, content: fixResult.code, language: validation.language });
+          await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); 
+        } catch {}
         return { ok: true, text: `✅ Đã tạo code mới và lưu vào dự án.\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "delegate-pass" } };
-      } else {
-         return { ok: true, text: `⚠ Lính đã tạo code nhưng sửa ${MAX_FIX_ITERATIONS} lần vẫn lỗi:\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "delegate-fail" } };
-      }
+      } else return { ok: true, text: `⚠ Lính đã tạo code nhưng sửa ${MAX_FIX_ITERATIONS} lần vẫn lỗi:\n\n\`\`\`${fixResult.language}\n${fixResult.code}\n\`\`\``, meta: { action: "delegate-fail" } };
     }
   }
 
@@ -333,11 +286,11 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 }
 
 // ============================================================
-// CÁC HÀM PROMPT (Đã sửa để bỏ Sandbox)
+// PROMPT (Hướng 3: Tối ưu cho dự án đa file)
 // ============================================================
 function buildBossReviewMessages({ language, code }) {
   return [
-    { role: "system", content: "Bạn là Chuyên gia Kiểm thử (QA). Bạn phải tìm CẢ lỗi cú pháp VÀ lỗi logic trong code. Nếu không có lỗi, CHỈ trả về: NO_LOGIC_ERROR. Cấm bịa lỗi. Nếu có lỗi, hãy chỉ rõ ra." },
+    { role: "system", content: "Bạn là Chuyên gia Kiểm thử (QA). Tìm CẢ lỗi cú pháp VÀ lỗi logic. Nếu không có lỗi, CHỈ trả về: NO_LOGIC_ERROR. Cấm bịa lỗi. Nếu có lỗi, chỉ rõ dòng và cách sửa." },
     { role: "user", content: `Ngôn ngữ: ${language}\n\nCode:\n\`\`\`${language}\n${code}\n\`\`\`` }
   ];
 }
@@ -352,9 +305,19 @@ function buildBossFixCodeMessages({ logicError, failedCode, language }) {
 
 function buildBossMessages({ userRequest, history = [], fileNames = [], currentCode = null }) {
   const today = new Date().toLocaleDateString("vi-VN");
-  let systemPrompt = `Bạn là Rồng Thần — BOSS. Hôm nay: ${today}.\nFile dự án: ${fileNames.join(", ") || "Chưa có"}.\n\n`;
-  if (currentCode) systemPrompt += `CODE HIỆN TẠI:\n\`\`\`\n${String(currentCode).slice(0, 3000)}\n\`\`\`\n\n`;
-  systemPrompt += `QUY TẮC:\n- Trả lời tự nhiên, thân thiện.\n- Nếu người dùng muốn tạo/sửa code -> Dùng tool "delegate_soldier".\n- Nếu cần tra cứu thông tin thực tế -> Dùng tool "search_web".\n- KHÔNG sử dụng bảng Markdown (|...|).`;
+  let systemPrompt = `Bạn là Rồng Thần — BOSS. Hôm nay: ${today}.\n`;
+  
+  if (fileNames.length > 0) {
+    systemPrompt += `Dự án hiện tại có ${fileNames.length} file: ${fileNames.join(", ")}.\n\n`;
+  } else {
+    systemPrompt += `Dự án chưa có file nào.\n\n`;
+  }
+
+  if (currentCode) {
+    systemPrompt += `DƯỚI ĐÂY LÀ NỘI DUNG FILE ĐẦU TIÊN (Hãy đọc để hiểu ngữ cảnh):\n\`\`\`\n${String(currentCode).slice(0, 3000)}\n\`\`\`\n\n`;
+  }
+  
+  systemPrompt += `QUY TẮC:\n- Trả lời tự nhiên.\n- Nếu user muốn tạo/sửa code -> Gọi tool "delegate_soldier".\n- Nếu cần tra cứu thông tin -> Gọi tool "search_web".\n- KHÔNG dùng bảng Markdown (|...|).`;
 
   const messages = [{ role: "system", content: systemPrompt }];
   for (const m of history) { if (m.text && m.text.trim()) messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
@@ -423,7 +386,11 @@ async function runChunkedDelegate({ userId, conversationId, userRequest, bossSes
   let finalText = outputs.join("\n\n");
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
-    try { await saveArtifact({ userId, conversationId, files: { [`index.${lastLanguage}`]: mergedCode }, version: 1 }); } catch {}
+    const finalFilename = `index.${lastLanguage}`;
+    try { 
+      await upsertFile({ userId, conversationId, filename: finalFilename, content: mergedCode, language: lastLanguage });
+      await saveArtifact({ userId, conversationId, files: {}, version: 1 }); 
+    } catch {}
     finalText = `✅ Code đã hoàn thành.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
   }
   return { ok: true, text: finalText, meta: { action: "delegate-chunked", chunked: true, chunkCount: chunks.length } };
@@ -442,7 +409,6 @@ function mergeCodeChunks(codeChunks, language) {
   return codeChunks.join("\n\n");
 }
 
-// ROUTE
 router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, res, (err) => { if (err) return res.status(400).json({ ok: false, message: "Lỗi upload" }); next(); }); }, async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -485,8 +451,7 @@ router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, 
   } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
 });
 
-// Các route khác giữ nguyên
-router.post("/fix-continue", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const conversationId = req.body?.conversationId; if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" }); const latest = await getLatestCodeArtifact(conversationId); if (!latest || !latest.files) return res.status(400).json({ ok: false, message: "Không có dự án để sửa." }); const projectFiles = latest.files; const currentVersion = latest.version || 1; const fileNames = Object.keys(projectFiles); if (fileNames.length === 0) return res.status(400).json({ ok: false, message: "Dự án rỗng." }); const targetFile = fileNames[0]; const lang = targetFile.split('.').pop(); const originalCode = projectFiles[targetFile]; const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: originalCode, currentVersion, signal: null }); if (fixResult.ok) { projectFiles[targetFile] = fixResult.code; try { await saveArtifact({ userId, conversationId, files: projectFiles, version: currentVersion + 1 }); } catch {} const hasChanged = fixResult.code !== originalCode; const statusMsg = hasChanged ? `✅ Đã sửa xong file \`${targetFile}\`.` : `✅ File \`${targetFile}\` đã kiểm tra, không có lỗi.`; const finalText = `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``; const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } else { const delivered = await traKetQuaChoUser({ userId, conversationId, text: `⚠ Còn lỗi: ${fixResult.error}`, meta: { action: "resume-fail" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
+router.post("/fix-continue", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const conversationId = req.body?.conversationId; if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" }); const latest = await getLatestCodeArtifact(conversationId); if (!latest) return res.status(400).json({ ok: false, message: "Không có dự án để sửa." }); const projectFiles = await getAllFiles({ conversationId }); const currentVersion = latest.version || 1; const fileNames = Object.keys(projectFiles); if (fileNames.length === 0) return res.status(400).json({ ok: false, message: "Dự án rỗng." }); const targetFile = fileNames[0]; const lang = targetFile.split('.').pop(); const originalCode = projectFiles[targetFile]; const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: originalCode, currentVersion, signal: null }); if (fixResult.ok) { try { await upsertFile({ userId, conversationId, filename: targetFile, content: fixResult.code, language: lang }); await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); } catch {} const hasChanged = fixResult.code !== originalCode; const statusMsg = hasChanged ? `✅ Đã sửa xong file \`${targetFile}\`.` : `✅ File \`${targetFile}\` đã kiểm tra, không có lỗi.`; const finalText = `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``; const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } else { const delivered = await traKetQuaChoUser({ userId, conversationId, text: `⚠ Còn lỗi: ${fixResult.error}`, meta: { action: "resume-fail" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.post("/conversations", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { projectId = null, title = null } = req.body || {}; const convo = await createConversation({ userId, projectId, title }); return res.json({ ok: true, conversation: { ...convo, id: String(convo._id) } }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.get("/conversations/:conversationId/messages", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const { conversationId } = req.params; const convo = await getConversation(userId, conversationId); if (!convo) return res.status(404).json({ ok: false, message: "Không tìm thấy hội thoại" }); const raw = await listMessages(conversationId); const items = await Promise.all(raw.map(attachFilesToMessage)); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
 router.get("/conversations/recent", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const items = await listRecentConversations(userId, {}); return res.json({ ok: true, items }); } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });
