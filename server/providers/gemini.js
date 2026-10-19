@@ -1,6 +1,6 @@
 // server/providers/gemini.js
 // Nhiệm vụ: Kết nối Gemini (Google Generative Language API).
-// Hỗ trợ Native Tool Calling.
+// Đã sửa lỗi convert Tool Schema và mapMessages.
 
 import { MODEL_PROVIDERS } from "../config/providers.js";
 import { LIMITS } from "../config/limits.js";
@@ -14,10 +14,16 @@ const GEMINI = MODEL_PROVIDERS.gemini;
 export async function verifyKey(rawKey) {
   const url = `${GEMINI.baseUrl}${GEMINI.verifyPath}?key=${encodeURIComponent(rawKey)}`;
   try {
-    const res = await fetchWithTimeout(url, { method: "GET" }, LIMITS.MODEL_SCAN_TIMEOUT_MS);
+    const res = await fetchWithTimeout(
+      url,
+      { method: "GET" },
+      LIMITS.MODEL_SCAN_TIMEOUT_MS
+    );
     const body = await safeJson(res);
     assertOkResponse(res.status, body, url);
-    const models = Array.isArray(body?.models) ? body.models.map((m) => String(m.name || "").replace(/^models\//, "")).filter(Boolean) : [];
+    const models = Array.isArray(body?.models)
+      ? body.models.map((m) => String(m.name || "").replace(/^models\//, "")).filter(Boolean)
+      : [];
     return { ok: true, models };
   } catch (err) {
     return { ok: false, models: [], error: err?.message || "Key không hợp lệ" };
@@ -25,9 +31,30 @@ export async function verifyKey(rawKey) {
 }
 
 // ============================================================
-// GỌI CHAT (HỖ TRỢ TOOLS)
+// HELPER: CONVERT SCHEMA SANG CHUẨN GEMINI (HỖ TRỢ ARRAY)
 // ============================================================
-export async function chat({ rawKey, model, messages, temperature = 0.7, maxTokens = 2048, tools, signal }) {
+function convertGeminiType(v) {
+  if (!v || !v.type) return v;
+  const result = { type: String(v.type).toUpperCase() };
+  if (v.description) result.description = v.description;
+  if (v.enum) result.enum = v.enum;
+  if (v.required) result.required = v.required;
+  if (v.items) result.items = convertGeminiType(v.items);
+  if (v.properties) {
+    result.properties = {};
+    for (const [k, val] of Object.entries(v.properties)) {
+      result.properties[k] = convertGeminiType(val);
+    }
+  }
+  return result;
+}
+
+// ============================================================
+// GỌI CHAT (HỖ TRỢ NATIVE TOOL CALLING)
+// ============================================================
+export async function chat({
+  rawKey, model, messages, temperature = 0.7, maxTokens = 2048, tools, signal,
+}) {
   const url = `${GEMINI.baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(rawKey)}`;
 
   const { contents, systemInstruction } = mapMessages(messages);
@@ -44,21 +71,12 @@ export async function chat({ rawKey, model, messages, temperature = 0.7, maxToke
     payload.systemInstruction = { parts: [{ text: systemInstruction }] };
   }
 
-  // Chuyển đổi tools sang chuẩn của Gemini (Type phải viết HOA)
   if (tools && tools.length > 0) {
     payload.tools = [{
       functionDeclarations: tools.map(t => ({
         name: t.name,
         description: t.description,
-        parameters: {
-          type: "OBJECT",
-          properties: Object.fromEntries(
-            Object.entries(t.parameters.properties || {}).map(([k, v]) => [
-              k, { type: v.type.toUpperCase(), description: v.description }
-            ])
-          ),
-          required: t.parameters.required || []
-        }
+        parameters: convertGeminiType(t.parameters)
       }))
     }];
   }
@@ -67,7 +85,12 @@ export async function chat({ rawKey, model, messages, temperature = 0.7, maxToke
     async () => {
       const res = await fetchWithTimeout(
         url,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal,
+        },
         LIMITS.PROVIDER_TIMEOUT_MS
       );
 
@@ -79,7 +102,6 @@ export async function chat({ rawKey, model, messages, temperature = 0.7, maxToke
       let text = "";
       let toolCalls = [];
 
-      // Đọc Text và Function Call
       for (const part of parts) {
         if (part.text) text += part.text;
         if (part.functionCall) {
@@ -100,7 +122,7 @@ export async function chat({ rawKey, model, messages, temperature = 0.7, maxToke
 }
 
 // ============================================================
-// MAP MESSAGES
+// MAP MESSAGES (Gộp role trùng + bỏ tin đầu nếu là model)
 // ============================================================
 function mapMessages(messages) {
   let systemInstruction = "";
@@ -126,7 +148,10 @@ function mapMessages(messages) {
     }
   }
 
-  if (contents.length > 0 && contents[0].role === "model") contents.shift();
+  if (contents.length > 0 && contents[0].role === "model") {
+    contents.shift();
+  }
+
   return { contents, systemInstruction };
 }
 
@@ -137,7 +162,8 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), timeoutMs);
   if (options.signal) options.signal.addEventListener("abort", () => ctrl.abort(), { once: true });
-  try { return await fetch(url, { ...options, signal: ctrl.signal }); } finally { clearTimeout(id); }
+  try { return await fetch(url, { ...options, signal: ctrl.signal }); } 
+  finally { clearTimeout(id); }
 }
 
 async function safeJson(res) {
