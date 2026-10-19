@@ -295,7 +295,10 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   const history = await loadConversationHistory(conversationId, HISTORY_FOR_BOSS);
   const historyCtx = history.slice(0, -1);
   
-  const bossMessages = buildBossMessages({ userRequest, history: historyCtx, fileNames });
+  // Lấy nội dung file đầu tiên để cho BOSS đọc
+  const currentCode = fileNames.length > 0 ? projectFiles[fileNames[0]] : null;
+
+  const bossMessages = buildBossMessages({ userRequest, history: historyCtx, fileNames, currentCode });
   let bossRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: bossMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
   if (!bossRes.ok) {
     bossRes = await goiBossMoi({ userId, conversationId, oldSession: null, messages: bossMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
@@ -309,7 +312,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
   if (parsed.type === "tool" && parsed.tool === "search_web") {
     let query = parsed.args?.query || userRequest;
-    // [THÊM 1] Ép query phải có năm hiện tại (nếu BOSS quên)
+    // Ép query phải có năm hiện tại (nếu BOSS quên)
     const currentYear = new Date().getFullYear();
     if (!/\b20\d{2}\b/.test(query)) {
       query = `${query} ${currentYear}`;
@@ -403,20 +406,41 @@ function buildBossFixCodeMessages({ sandboxError, logicError, failedCode, langua
 // ============================================================
 // CÁC HÀM XỬ LÝ PROMPT KHÁC
 // ============================================================
-function buildBossMessages({ userRequest, history = [], fileNames = [] }) {
-  // [THÊM 2] Lấy ngày hôm nay + năm hiện tại + cấm bảng Markdown
+// ĐÃ CẬP NHẬT: Truyền nội dung code để BOSS hiểu ngữ cảnh + Prompt chuẩn ChatGPT
+function buildBossMessages({ userRequest, history = [], fileNames = [], currentCode = null }) {
   const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
   const currentYear = new Date().getFullYear();
-  const messages = [
-    { role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần — BOSS. Dự án hiện có các file: ${fileNames.join(", ") || "Chưa có file nào"}. Nếu User muốn tạo code mới -> Gọi 'delegate_soldier'. Nếu cần tra cứu thông tin mới/giá cả/thời sự -> Gọi 'search_web' với JSON: {"tool":"search_web","args":{"query":"... ${currentYear}"}}. KHÔNG sử dụng bảng Markdown (dạng |...|); nếu cần liệt kê, dùng gạch đầu dòng (-) và xuống dòng.` }
-  ];
-  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
+  
+  let systemPrompt = `Hôm nay là ${today} (năm ${currentYear}). Bạn là Rồng Thần — BOSS, một trợ lý AI thông minh, hoạt động tự nhiên như ChatGPT.\n\n`;
+  systemPrompt += `Dự án hiện tại đang có các file: ${fileNames.join(", ") || "Chưa có file nào"}.\n\n`;
+  
+  // Cung cấp nội dung code để BOSS "nhìn" thấy
+  if (currentCode) {
+    systemPrompt += `DƯỚI ĐÂY LÀ NỘI DUNG CODE HIỆN TẠI (Hãy đọc kỹ để hiểu ngữ cảnh):\n\`\`\`\n${String(currentCode).slice(0, 4000)}\n\`\`\`\n\n`;
+  }
+
+  systemPrompt += `QUY TẮC GIAO TIẾP:
+1. Nếu User chỉ chào hỏi, tâm sự, hoặc hỏi thông tin bình thường -> Hãy trả lời bằng TEXT tự nhiên, thân thiện. TUYỆT ĐỐI KHÔNG gọi tool.
+2. Nếu User muốn tạo code mới, viết văn, hoặc YÊU CẦU SỬA code -> Gọi tool 'delegate_soldier' bằng JSON.
+3. Nếu User hỏi thông tin thời gian thực (giá vàng, thời tiết, tin tức) -> Gọi tool 'search_web' bằng JSON.
+
+CÁCH GỌI TOOL (Trả về DUY NHẤT JSON):
+- Tra web: {"tool":"search_web","args":{"query":"... ${currentYear}"}}
+- Giao việc: {"tool":"delegate_soldier","args":{"taskType":"code|bulk|fix-code","goal":"...","requirements":[],"constraints":[],"expectedOutput":""}}
+
+LƯU Ý: KHÔNG sử dụng bảng Markdown (dạng |...|); nếu cần liệt kê, dùng gạch đầu dòng (-) và xuống dòng.`;
+
+  const messages = [{ role: "system", content: systemPrompt }];
+  
+  for (const m of history) { 
+    if (!m.text || !m.text.trim()) continue; 
+    messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); 
+  }
   messages.push({ role: "user", content: userRequest });
   return messages;
 }
 
 function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
-  // [THÊM 3] Lấy ngày hôm nay + cấm bảng Markdown
   const today = new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
   const messages = [{ role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User. Ưu tiên dữ liệu mới nhất; nếu dữ liệu cũ hơn 30 ngày so với hôm nay thì nói rõ ngày của dữ liệu. KHÔNG sử dụng bảng Markdown (dạng |...|); nếu cần liệt kê, dùng gạch đầu dòng (-) và xuống dòng.` }];
   for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
