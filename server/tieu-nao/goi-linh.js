@@ -124,6 +124,7 @@ export async function goiLinh({
 // ============================================================
 // XOAY KEY × MODEL
 // ============================================================
+// Thứ tự: PRIORITY 1 → PRIORITY 2 → ...
 
 async function xoayKeyVaModel({
   userId,
@@ -135,133 +136,101 @@ async function xoayKeyVaModel({
   maxTokens,
   signal,
 }) {
-  const byProvider = {};
+  const errors = [];
+  
+  // Tối ưu: Lấy sẵn key của các provider để không gọi DB nhiều lần
+  const providerKeys = {};
   for (const m of models) {
-    if (!byProvider[m.provider]) byProvider[m.provider] = [];
-    byProvider[m.provider].push(m);
+    if (providerKeys[m.provider] === undefined) {
+      providerKeys[m.provider] = await listKeysByProvider(userId, m.provider);
+    }
   }
 
-  const errors = [];
-
-  for (const provider of Object.keys(byProvider)) {
+  // Duyệt ĐÚNG THEO THỨ TỰ PRIORITY (1, 2, 3, 4...)
+  for (const model of models) {
+    const provider = model.provider;
     const mod = MODULES[provider];
     if (!mod) continue;
 
-    const providerModels = byProvider[provider];
-    const keys = await listKeysByProvider(userId, provider);
-    if (!keys || keys.length === 0) continue;
+    const keys = providerKeys[provider] || [];
+    if (keys.length === 0) continue;
 
     for (let keyIdx = 0; keyIdx < keys.length; keyIdx++) {
       const key = keys[keyIdx];
       if (key.quota === "out") continue;
 
-      for (const model of providerModels) {
-        await logInfo(`Tiểu Não: thử key #${keyIdx + 1} × model ${model.name}`, {
-          userId,
-          taskId,
-          provider,
+      await logInfo(`Tiểu Não: thử key #${keyIdx + 1} × model ${model.name}`, {
+        userId,
+        taskId,
+        provider,
+        model: model.name,
+      });
+
+      // Tạo subtask
+      const sub = await batDauLamViec({
+        taskId,
+        soldierModel: model.name,
+        soldierProvider: provider,
+        soldierKeyId: String(key._id),
+        payload,
+      });
+      const subTaskId = String(sub._id);
+
+      try {
+        const res = await mod.chat({
+          rawKey: key.rawKey,
           model: model.name,
+          messages,
+          temperature,
+          maxTokens,
+          signal,
         });
 
-        // Tạo subtask
-        const sub = await batDauLamViec({
-          taskId,
-          soldierModel: model.name,
-          soldierProvider: provider,
-          soldierKeyId: String(key._id),
-          payload,
-        });
-        const subTaskId = String(sub._id);
+        if (res.ok && res.text) {
+          await baoCaoConDung(model.name, provider);
 
-        try {
-          const res = await mod.chat({
-            rawKey: key.rawKey,
-            model: model.name,
-            messages,
-            temperature,
-            maxTokens,
-            signal,
+          await saveResult({
+            taskId,
+            subTaskId,
+            status: "success",
+            output: res.text,
+            meta: { usage: res.usage, model: model.name },
           });
 
-          if (res.ok && res.text) {
-            await baoCaoConDung(model.name, provider);
+          await ketThucLamViec(subTaskId);
+          await cleanupFailedSubTasks(taskId, subTaskId);
 
-            await saveResult({
-              taskId,
-              subTaskId,
-              status: "success",
-              output: res.text,
-              meta: { usage: res.usage, model: model.name },
-            });
+          await logInfo("Tiểu Não: LÍNH THÀNH CÔNG", {
+            userId,
+            taskId,
+            model: model.name,
+            provider,
+            keyIdx: keyIdx + 1,
+          });
 
-            await ketThucLamViec(subTaskId);
-            await cleanupFailedSubTasks(taskId, subTaskId);
+          return {
+            ok: true,
+            text: res.text,
+            usage: res.usage,
+            subTaskId,
+            soldier: { name: model.name, provider },
+            keyId: String(key._id),
+          };
+        }
+      } catch (err) {
+        const msg = String(err?.message || "").toLowerCase();
+        const errText = err?.message || "Lỗi không rõ";
 
-            await logInfo("Tiểu Não: LÍNH THÀNH CÔNG", {
-              userId,
-              taskId,
-              model: model.name,
-              provider,
-              keyIdx: keyIdx + 1,
-            });
+        // Quota → đánh dấu key hết
+        if (
+          msg.includes("quota") ||
+          msg.includes("429") ||
+          msg.includes("rate") ||
+          msg.includes("exceeded")
+        ) {
+          await updateQuota(key._id, "out");
+          await baoCaoHetQuota(model.name, provider);
 
-            return {
-              ok: true,
-              text: res.text,
-              usage: res.usage,
-              subTaskId,
-              soldier: { name: model.name, provider },
-              keyId: String(key._id),
-            };
-          }
-        } catch (err) {
-          const msg = String(err?.message || "").toLowerCase();
-          const errText = err?.message || "Lỗi không rõ";
-
-          // Quota → đánh dấu key hết
-          if (
-            msg.includes("quota") ||
-            msg.includes("429") ||
-            msg.includes("rate") ||
-            msg.includes("exceeded")
-          ) {
-            await updateQuota(key._id, "out");
-            await baoCaoHetQuota(model.name, provider);
-
-            await saveResult({
-              taskId,
-              subTaskId,
-              status: "error",
-              output: "",
-              meta: { error: errText, model: model.name },
-            });
-            await setSubTaskStatus(subTaskId, "skipped");
-
-            await logWarn(`Tiểu Não: key #${keyIdx + 1} hết quota`, {
-              userId,
-              keyId: String(key._id),
-            });
-            errors.push(`key#${keyIdx + 1}: quota`);
-            break; // chuyển key
-          }
-
-          if (
-            msg.includes("invalid") ||
-            msg.includes("401") ||
-            msg.includes("403")
-          ) {
-            await updateQuota(key._id, "out");
-            await setSubTaskStatus(subTaskId, "skipped");
-            await logWarn(`Tiểu Não: key #${keyIdx + 1} không hợp lệ`, {
-              userId,
-              keyId: String(key._id),
-            });
-            errors.push(`key#${keyIdx + 1}: invalid`);
-            break;
-          }
-
-          // Lỗi model → thử model tiếp
-          await baoCaoLoi(model.name, provider, errText);
           await saveResult({
             taskId,
             subTaskId,
@@ -270,8 +239,41 @@ async function xoayKeyVaModel({
             meta: { error: errText, model: model.name },
           });
           await setSubTaskStatus(subTaskId, "skipped");
-          errors.push(`${model.name}: ${errText}`);
+
+          await logWarn(`Tiểu Não: key #${keyIdx + 1} hết quota`, {
+            userId,
+            keyId: String(key._id),
+          });
+          errors.push(`key#${keyIdx + 1}: quota`);
+          break; // chuyển key
         }
+
+        if (
+          msg.includes("invalid") ||
+          msg.includes("401") ||
+          msg.includes("403")
+        ) {
+          await updateQuota(key._id, "out");
+          await setSubTaskStatus(subTaskId, "skipped");
+          await logWarn(`Tiểu Não: key #${keyIdx + 1} không hợp lệ`, {
+            userId,
+            keyId: String(key._id),
+          });
+          errors.push(`key#${keyIdx + 1}: invalid`);
+          break;
+        }
+
+        // Lỗi model → thử model tiếp
+        await baoCaoLoi(model.name, provider, errText);
+        await saveResult({
+          taskId,
+          subTaskId,
+          status: "error",
+          output: "",
+          meta: { error: errText, model: model.name },
+        });
+        await setSubTaskStatus(subTaskId, "skipped");
+        errors.push(`${model.name}: ${errText}`);
       }
     }
   }

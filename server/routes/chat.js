@@ -458,10 +458,51 @@ function parseBossOutput(text) {
   return { type: "text", text: s };
 }
 
+// ĐÃ CẬP NHẬT: Lính nhận đủ format (requirements, constraints, expectedOutput) + Luật viết code chặt chẽ
 function buildSoldierMessages({ format, history = [], userRequest }) {
-  const messages = [{ role: "system", content: "Bạn là lính. Viết code theo format BOSS giao. Trả về TOÀN BỘ CODE trong ```<lang>...```." }];
-  for (const m of history) { if (!m.text || !m.text.trim()) continue; messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
-  messages.push({ role: "user", content: `YÊU CẦU: ${userRequest}\nFORMAT: ${format.goal}` });
+  // System prompt chi tiết để Lính không viết bậy
+  let systemPrompt = `Bạn là Lính — một lập trình viên AI chuyên nghiệp, được BOSS giao việc.
+NHIỆM VỤ: Viết code hoặc văn bản theo đúng yêu cầu.
+
+QUY TẮC BẮT BUỘC:
+1. KHÔNG giải thích dông dài. Chỉ trả về kết quả.
+2. Nếu viết code: Luôn bọc code trong \`\`\`<ngôn ngữ>\n...\n\`\`\`
+3. Nếu viết HTML/Web: Phải là code HTML HOÀN CHỈNH (có <!DOCTYPE html>, <html>, <head>, <body>). KHÔNG dùng thư viện ngoài (CDN) trừ khi được yêu cầu.
+4. KHÔNG viết các lệnh shell (npm install, git...). Chỉ viết code chạy được.
+5. KHÔNG dùng bảng Markdown (|...|).`;
+
+  const messages = [{ role: "system", content: systemPrompt }];
+  
+  // Chỉ lấy tối đa 10 tin nhắn gần nhất để tránh nhiễu loạn (Lính không cần đọc lịch sử chat dài)
+  const recentHistory = history.slice(-10);
+  for (const m of recentHistory) { 
+    if (!m.text || !m.text.trim()) continue; 
+    messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); 
+  }
+
+  // Tổng hợp format BOSS giao (Đã bổ sung requirements, constraints, expectedOutput)
+  let taskPrompt = `YÊU CẦU GỐC CỦA USER:\n${userRequest}\n\n`;
+  taskPrompt += `CHỈ THỊ TỪ BOSS:\n- Mục tiêu: ${format.goal}\n`;
+  
+  if (format.isModify) {
+    taskPrompt += `- LƯU Ý: ĐÂY LÀ SỬA CODE. KHÔNG viết lại từ đầu, chỉ sửa phần được yêu cầu.\n`;
+  }
+
+  if (format.requirements && format.requirements.length > 0) {
+    taskPrompt += `- Yêu cầu cụ thể:\n${format.requirements.map(r => `  + ${r}`).join('\n')}\n`;
+  }
+  
+  if (format.constraints && format.constraints.length > 0) {
+    taskPrompt += `- Ràng buộc:\n${format.constraints.map(c => `  + ${c}`).join('\n')}\n`;
+  }
+  
+  if (format.expectedOutput) {
+    taskPrompt += `- Kết quả mong đợi: ${format.expectedOutput}\n`;
+  }
+
+  taskPrompt += `\nHãy viết code hoàn chỉnh và trả về duy nhất trong khối \`\`\`<ngôn ngữ>...\`\`\`.`;
+
+  messages.push({ role: "user", content: taskPrompt });
   return messages;
 }
 
