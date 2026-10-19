@@ -1,24 +1,21 @@
 // server/db/projectFiles.js
 // Nhiệm vụ: Quản lý từng file riêng biệt trong dự án (Tránh giới hạn 16MB của MongoDB)
+// SỬ DỤNG NATIVE MONGODB DRIVER (Đồng bộ với codeArtifacts.js)
 
-import mongoose from "mongoose";
+const COL_NAME = "projectFiles";
 
-const projectFileSchema = new mongoose.Schema({
-  userId: { type: String, required: true, index: true },
-  conversationId: { type: String, required: true, index: true },
-  filename: { type: String, required: true },
-  content: { type: String, default: "" },
-  language: { type: String, default: "html" },
-  updatedAt: { type: Date, default: Date.now }
-});
+function col() {
+  const db = global.__rongThanDB__;
+  if (!db) throw new Error("[Rồng Thần][db] Chưa có kết nối MongoDB.");
+  return db.collection(COL_NAME);
+}
 
-// Đảm bảo trong 1 dự án, tên file là duy nhất
-projectFileSchema.index({ conversationId: 1, filename: 1 }, { unique: true });
-
-const ProjectFile = mongoose.models.ProjectFile || mongoose.model("ProjectFile", projectFileSchema);
-
+// Lấy tất cả file của 1 dự án (Trả về dạng object { "index.html": "..." } để tương thích với chat.js)
 export async function getAllFiles({ conversationId }) {
-  const files = await ProjectFile.find({ conversationId }).lean();
+  const files = await col()
+    .find({ conversationId: String(conversationId) })
+    .toArray();
+    
   const result = {};
   for (const f of files) {
     result[f.filename] = f.content;
@@ -26,20 +23,38 @@ export async function getAllFiles({ conversationId }) {
   return result;
 }
 
+// Lưu hoặc cập nhật 1 file
 export async function upsertFile({ userId, conversationId, filename, content, language }) {
-  await ProjectFile.updateOne(
-    { conversationId, filename },
-    { $set: { userId, content, language, updatedAt: new Date() } },
-    { upsert: true }
+  const now = new Date();
+  
+  await col().updateOne(
+    { 
+      conversationId: String(conversationId), 
+      filename: String(filename) 
+    },
+    { 
+      $set: { 
+        userId: String(userId), 
+        content: String(content || ""), 
+        language: String(language || "html"), 
+        updatedAt: now 
+      } 
+    },
+    { upsert: true } // Nếu chưa có thì tạo mới, có rồi thì cập nhật
   );
 }
 
+// Xóa 1 file
 export async function deleteFile({ conversationId, filename }) {
-  await ProjectFile.deleteOne({ conversationId, filename });
+  await col().deleteOne({ 
+    conversationId: String(conversationId), 
+    filename: String(filename) 
+  });
 }
 
+// Xóa toàn bộ file của dự án
 export async function deleteAllFiles({ conversationId }) {
-  await ProjectFile.deleteMany({ conversationId });
+  await col().deleteMany({ conversationId: String(conversationId) });
 }
 
 export default { getAllFiles, upsertFile, deleteFile, deleteAllFiles };
