@@ -45,6 +45,17 @@ export async function sendMessage({
 }
 
 // ============================================================
+// LẤY TRẠNG THÁI JOB (POLLING)
+// ============================================================
+
+export async function getJobStatus(jobId) {
+  if (!jobId) {
+    throw new Error("Thiếu jobId để kiểm tra trạng thái");
+  }
+  return api.get(`/chat/jobs/${encodeURIComponent(jobId)}`);
+}
+
+// ============================================================
 // SỬA TIẾP (RESUME)
 // ============================================================
 

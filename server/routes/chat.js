@@ -1,5 +1,5 @@
 // server/routes/chat.js
-// Nhiệm vụ: API chat — BOSS như ChatGPT. (Tối ưu Database đa file + Prompt)
+// Nhiệm vụ: API chat — BOSS như ChatGPT. (Background Job + Fallback Web)
 
 import express from "express";
 import multer from "multer";
@@ -11,7 +11,8 @@ import {
 import { listMessages, listRecentMessages } from "../db/messages.js";
 import { saveAttachment, listByMessage as listAttachmentsByMessage } from "../db/attachments.js";
 import { getLatestAny as getLatestCodeArtifact, saveArtifact } from "../db/codeArtifacts.js";
-import { getAllFiles, upsertFile } from "../db/projectFiles.js"; // IMPORT MỚI
+import { getAllFiles, upsertFile } from "../db/projectFiles.js";
+import { createJob, updateJobDone, updateJobError, getJob } from "../db/jobs.js";
 
 import { nhanYeuCau as gwNhanYeuCau } from "../gateway/nhan-yeu-cau.js";
 import { chuyenYeuCauChoBoss } from "../gateway/chuyen-yeu-cau-cho-boss.js";
@@ -150,13 +151,12 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
   try {
     const artifact = await getLatestCodeArtifact(conversationId);
     currentVersion = artifact?.version || 1;
-    projectFiles = await getAllFiles({ conversationId }); // LẤY TỪ BẢNG MỚI
+    projectFiles = await getAllFiles({ conversationId });
   } catch {}
 
   const fileNames = Object.keys(projectFiles);
   const extractedFromUser = extractCodeFromRequest(userRequest);
 
-  // 1. USER GỬI CODE
   if (extractedFromUser) {
     const reviewRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: buildBossReviewMessages({ language: extractedFromUser.language, code: extractedFromUser.code }), temperature: 0.1, maxTokens: 4096, signal });
     let logicError = "";
@@ -182,7 +182,6 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     }
   }
 
-  // 2. LỆNH "SỬA ĐI"
   if (/^(sửa đi|sửa lỗi|fix|fix đi|sửa|sửa code|sửa lại|sửa tiếp|làm đi|ok sửa|fix hết|đồng ý)$/i.test(userRequest.trim()) && fileNames.length > 0) {
     const latestFile = fileNames.find(f => f.startsWith("temp_code")) || fileNames[0];
     const lang = latestFile.split('.').pop();
@@ -197,7 +196,6 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     } else return { ok: true, text: `⚠ Đã cố gắng sửa nhưng thất bại: ${fixResult.error}`, meta: { action: "fix-fail" } };
   }
 
-  // 3. SỬA FILE CỤ THỂ
   const fileQueryMatch = userRequest.match(/(sửa|fix|check|kiểm tra)\s+(file|lính)\s+(.+)/i);
   if (fileQueryMatch && fileNames.length > 0) {
     const query = fileQueryMatch[3].trim();
@@ -216,15 +214,13 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
     } else return { ok: true, text: `⚠ File \`${targetFile.filename}\` còn lỗi: ${fixResult.error}`, meta: { action: "file-fail" } };
   }
 
-  // 4. HỎI DANH SÁCH FILE
   if (/danh sách file|list file|các file/i.test(userRequest) && fileNames.length > 0) {
      return { ok: true, text: `📁 Dự án hiện có ${fileNames.length} file:\n${fileNames.map((f, i) => `${i+1}. ${f}`).join("\n")}`, meta: { action: "list-files" } };
   }
 
-  // 5. CHAT BÌNH THƯỜNG / TẠO CODE MỚI
+  // ============ CHAT BÌNH THƯỜNG ============
   const history = await loadConversationHistory(conversationId, HISTORY_FOR_BOSS);
   const historyCtx = history.slice(0, -1);
-  // Nếu dự án có nhiều file, chỉ gửi file đầu tiên (hoặc file user yêu cầu) để tránh quá tải token
   const currentCode = fileNames.length > 0 ? projectFiles[fileNames[0]] : null;
 
   const bossMessages = buildBossMessages({ userRequest, history: historyCtx, fileNames, currentCode });
@@ -235,10 +231,28 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 
   const bossSessionId = bossRes.session ? String(bossRes.session._id) : null;
 
-  if (bossRes.toolCalls && bossRes.toolCalls.length > 0) {
-    const toolCall = bossRes.toolCalls[0];
+  // ============ FALLBACK: PARSE JSON TỪ TEXT NẾU MODEL KHÔNG SUPPORT NATIVE TOOL CALLING ============
+  let finalToolCalls = bossRes.toolCalls;
+  if (!finalToolCalls || finalToolCalls.length === 0) {
+    const rawText = String(bossRes.text || "").trim();
+    const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    const startIdx = cleaned.indexOf("{");
+    const endIdx = cleaned.lastIndexOf("}");
+    if (startIdx >= 0 && endIdx > startIdx) {
+      try {
+        const obj = JSON.parse(cleaned.slice(startIdx, endIdx + 1));
+        if (obj.tool) {
+          finalToolCalls = [{ name: obj.tool, args: obj.args || {} }];
+        }
+      } catch {}
+    }
+  }
+
+  if (finalToolCalls && finalToolCalls.length > 0) {
+    const toolCall = finalToolCalls[0];
     const args = toolCall.args || {};
 
+    // ============ XỬ LÝ TRA WEB ============
     if (toolCall.name === "search_web") {
       let query = args.query || userRequest;
       const currentYear = new Date().getFullYear();
@@ -247,9 +261,10 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
       const webContext = web.ok ? formatWebResults(web.results) : "";
       const finalMessages = buildBossAfterWebMessages({ userRequest, webContext, history: historyCtx });
       const finalRes = await goiBoss({ userId, conversationId, taskType: "call-boss", messages: finalMessages, temperature: 0.6, maxTokens: BOSS_MAX_OUTPUT_TOKENS, signal });
-      return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web.`, meta: { action: "web" } };
+      return { ok: true, text: finalRes.ok ? finalRes.text : `Không tra được web. ${web.error || ""}`, meta: { action: "web" } };
     }
 
+    // ============ XỬ LÝ GỌI LÍNH ============
     if (toolCall.name === "delegate_soldier") {
       const taskType = args.taskType || "bulk";
       const goal = args.goal || userRequest;
@@ -286,7 +301,7 @@ async function runBossPipeline({ userId, conversationId, userRequest, userLabel,
 }
 
 // ============================================================
-// PROMPT (Hướng 3: Tối ưu cho dự án đa file)
+// PROMPT (ĐÃ TĂNG CƯỜNG MÔ TẢ WEB)
 // ============================================================
 function buildBossReviewMessages({ language, code }) {
   return [
@@ -305,19 +320,25 @@ function buildBossFixCodeMessages({ logicError, failedCode, language }) {
 
 function buildBossMessages({ userRequest, history = [], fileNames = [], currentCode = null }) {
   const today = new Date().toLocaleDateString("vi-VN");
-  let systemPrompt = `Bạn là Rồng Thần — BOSS. Hôm nay: ${today}.\n`;
+  const currentYear = new Date().getFullYear();
   
-  if (fileNames.length > 0) {
-    systemPrompt += `Dự án hiện tại có ${fileNames.length} file: ${fileNames.join(", ")}.\n\n`;
-  } else {
-    systemPrompt += `Dự án chưa có file nào.\n\n`;
-  }
+  let systemPrompt = `Bạn là Rồng Thần — BOSS. Hôm nay là ${today} (năm ${currentYear}).\n`;
+  if (fileNames.length > 0) systemPrompt += `Dự án có ${fileNames.length} file: ${fileNames.join(", ")}.\n\n`;
+  if (currentCode) systemPrompt += `NỘI DUNG FILE ĐẦU TIÊN:\n\`\`\`\n${String(currentCode).slice(0, 2000)}\n\`\`\`\n\n`;
+  
+  systemPrompt += `QUY TẮC BẮT BUỘC:
+1. Nếu User chào hỏi hoặc trò chuyện bình thường -> Trả lời bằng TEXT tự nhiên.
+2. Nếu User muốn TẠO/SỬA CODE -> Gọi tool "delegate_soldier".
+3. Nếu User hỏi thông tin THỜI GIAN THỰC (giá vàng, thời tiết, tin tức, tỷ giá, sự kiện mới) -> BẮT BUỘC gọi tool "search_web" bằng JSON chính xác:
+   {"tool":"search_web","args":{"query":"<từ khóa> ${currentYear}"}}
+   
+   VÍ DỤ:
+   - User hỏi "Giá vàng hôm nay bao nhiêu?" -> Bạn trả về: {"tool":"search_web","args":{"query":"giá vàng hôm nay ${currentYear}"}}
+   - User hỏi "Thời tiết Hà Nội?" -> Bạn trả về: {"tool":"search_web","args":{"query":"thời tiết Hà Nội ${currentYear}"}}
+   
+   TUYỆT ĐỐI KHÔNG được nói "tôi không truy cập được web" hay "dữ liệu của tôi chỉ đến năm cũ". Bạn CÓ tool search_web, PHẢI gọi nó.
 
-  if (currentCode) {
-    systemPrompt += `DƯỚI ĐÂY LÀ NỘI DUNG FILE ĐẦU TIÊN (Hãy đọc để hiểu ngữ cảnh):\n\`\`\`\n${String(currentCode).slice(0, 3000)}\n\`\`\`\n\n`;
-  }
-  
-  systemPrompt += `QUY TẮC:\n- Trả lời tự nhiên.\n- Nếu user muốn tạo/sửa code -> Gọi tool "delegate_soldier".\n- Nếu cần tra cứu thông tin -> Gọi tool "search_web".\n- KHÔNG dùng bảng Markdown (|...|).`;
+4. KHÔNG sử dụng bảng Markdown (|...|).`;
 
   const messages = [{ role: "system", content: systemPrompt }];
   for (const m of history) { if (m.text && m.text.trim()) messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
@@ -327,7 +348,7 @@ function buildBossMessages({ userRequest, history = [], fileNames = [], currentC
 
 function buildBossAfterWebMessages({ userRequest, webContext, history = [] }) {
   const today = new Date().toLocaleDateString("vi-VN");
-  const messages = [{ role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User. Ưu tiên dữ liệu mới nhất. KHÔNG dùng bảng Markdown (|...|).` }];
+  const messages = [{ role: "system", content: `Hôm nay là ${today}. Bạn là Rồng Thần. Đọc dữ liệu web → trả lời User. Ưu tiên dữ liệu mới nhất. Trích nguồn nếu có. KHÔNG dùng bảng Markdown (|...|).` }];
   for (const m of history) { if (m.text && m.text.trim()) messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
   messages.push({ role: "user", content: ["Yêu cầu:", userRequest, "", "Dữ liệu web:", webContext || "(không có)"].join("\n") });
   return messages;
@@ -337,13 +358,11 @@ function buildSoldierMessages({ format, history = [], userRequest }) {
   let systemPrompt = `Bạn là Lính — lập trình viên AI. Viết code hoặc văn bản theo yêu cầu.\nQUY TẮC:\n1. KHÔNG giải thích dông dài.\n2. Code bọc trong \`\`\`<ngôn ngữ>\n...\n\`\`\`\n3. HTML/Web phải có <!DOCTYPE html>, <html>, <head>, <body>.\n4. KHÔNG dùng CDN ngoài trừ khi yêu cầu. KHÔNG viết shell.\n5. KHÔNG dùng bảng Markdown (|...|).`;
   const messages = [{ role: "system", content: systemPrompt }];
   for (const m of history.slice(-10)) { if (m.text && m.text.trim()) messages.push({ role: m.role === "ai" ? "assistant" : "user", content: m.text }); }
-  
   let taskPrompt = `YÊU CẦU GỐC:\n${userRequest}\n\nCHỈ THỊ TỪ BOSS:\n- Mục tiêu: ${format.goal}\n`;
   if (format.isModify) taskPrompt += `- LƯU Ý: ĐÂY LÀ SỬA CODE. KHÔNG viết lại từ đầu.\n`;
   if (format.requirements?.length > 0) taskPrompt += `- Yêu cầu cụ thể:\n${format.requirements.map(r => `  + ${r}`).join('\n')}\n`;
   if (format.constraints?.length > 0) taskPrompt += `- Ràng buộc:\n${format.constraints.map(c => `  + ${c}`).join('\n')}\n`;
   if (format.expectedOutput) taskPrompt += `- Kết quả mong đợi: ${format.expectedOutput}\n`;
-
   messages.push({ role: "user", content: taskPrompt + `\nHãy viết code hoàn chỉnh và trả về duy nhất trong khối \`\`\`<ngôn ngữ>...\`\`\`.` });
   return messages;
 }
@@ -387,10 +406,7 @@ async function runChunkedDelegate({ userId, conversationId, userRequest, bossSes
   if (codeChunks.length > 0) {
     const mergedCode = mergeCodeChunks(codeChunks, lastLanguage);
     const finalFilename = `index.${lastLanguage}`;
-    try { 
-      await upsertFile({ userId, conversationId, filename: finalFilename, content: mergedCode, language: lastLanguage });
-      await saveArtifact({ userId, conversationId, files: {}, version: 1 }); 
-    } catch {}
+    try { await upsertFile({ userId, conversationId, filename: finalFilename, content: mergedCode, language: lastLanguage }); await saveArtifact({ userId, conversationId, files: {}, version: 1 }); } catch {}
     finalText = `✅ Code đã hoàn thành.\n\n\`\`\`${lastLanguage}\n${mergedCode}\n\`\`\``;
   }
   return { ok: true, text: finalText, meta: { action: "delegate-chunked", chunked: true, chunkCount: chunks.length } };
@@ -409,13 +425,19 @@ function mergeCodeChunks(codeChunks, language) {
   return codeChunks.join("\n\n");
 }
 
-router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, res, (err) => { if (err) return res.status(400).json({ ok: false, message: "Lỗi upload" }); next(); }); }, async (req, res) => {
+// ============================================================
+// ROUTES (BACKGROUND JOB + POLLING)
+// ============================================================
+router.post("/send", (req, res, next) => { 
+  upload.array("attachments", 10)(req, res, (err) => { if (err) return res.status(400).json({ ok: false, message: "Lỗi upload" }); next(); }); 
+}, async (req, res) => {
   try {
     const userId = getUserId(req);
     const files = Array.isArray(req.files) ? req.files : [];
     if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
     const conversationId = req.body?.conversationId;
     let text = String(req.body?.text || "").trim();
+    
     if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" });
     if (!text && files.length === 0) return res.status(400).json({ ok: false, message: "Tin nhắn rỗng" });
     if (!text && files.length > 0) text = "[Ảnh đính kèm]";
@@ -441,14 +463,46 @@ router.post("/send", (req, res, next) => { upload.array("attachments", 10)(req, 
       bossUserRequest = `${bossUserRequest}\n\n[Tệp đính kèm: ${savedAttachments.length}]\n${attachDesc}`;
     }
 
-    const bossResult = await chuyenYeuCauChoBoss({ userId, conversationId, userRequest: bossUserRequest, userLabel: null, runBoss: runBossPipeline });
-    const received = await nhanKetQuaTuBoss({ userId, conversationId, bossResult });
-    if (!received.ok) return res.status(500).json({ ok: false, message: received.error });
-    const delivered = await traKetQuaChoUser({ userId, conversationId, text: received.text, meta: received.meta });
-    if (!delivered.ok) return res.status(500).json({ ok: false, message: delivered.error });
+    // TẠO JOB VÀ CHẠY NGẦM
+    const job = await createJob({ userId, conversationId });
 
-    return res.json({ ok: true, userMessage: { ...recv.userMessage, id: String(recv.userMessage._id), attachments: savedAttachments }, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } });
-  } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); }
+    (async () => {
+      try {
+        const bossResult = await chuyenYeuCauChoBoss({ userId, conversationId, userRequest: bossUserRequest, userLabel: null, runBoss: runBossPipeline });
+        const received = await nhanKetQuaTuBoss({ userId, conversationId, bossResult });
+        if (received.ok) {
+          const delivered = await traKetQuaChoUser({ userId, conversationId, text: received.text, meta: received.meta });
+          await updateJobDone(String(job._id), { 
+            aiMessage: delivered.ok ? { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } : null,
+            text: received.text 
+          });
+        } else {
+          await updateJobError(String(job._id), received.error);
+        }
+      } catch (e) {
+        await updateJobError(String(job._id), e.message);
+      }
+    })();
+
+    return res.json({ 
+      ok: true, 
+      jobId: String(job._id), 
+      userMessage: { ...recv.userMessage, id: String(recv.userMessage._id), attachments: savedAttachments }
+    });
+  } catch (err) { 
+    return res.status(500).json({ ok: false, message: "Lỗi server" }); 
+  }
+});
+
+router.get("/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = await getJob(jobId);
+    if (!job) return res.status(404).json({ ok: false, message: "Không tìm thấy job" });
+    return res.json({ ok: true, status: job.status, result: job.result, error: job.error });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: "Lỗi server" });
+  }
 });
 
 router.post("/fix-continue", async (req, res) => { try { const userId = getUserId(req); if (!userId) return res.status(401).json({ ok: false, message: "Chưa đăng nhập" }); const conversationId = req.body?.conversationId; if (!conversationId) return res.status(400).json({ ok: false, message: "Thiếu conversationId" }); const latest = await getLatestCodeArtifact(conversationId); if (!latest) return res.status(400).json({ ok: false, message: "Không có dự án để sửa." }); const projectFiles = await getAllFiles({ conversationId }); const currentVersion = latest.version || 1; const fileNames = Object.keys(projectFiles); if (fileNames.length === 0) return res.status(400).json({ ok: false, message: "Dự án rỗng." }); const targetFile = fileNames[0]; const lang = targetFile.split('.').pop(); const originalCode = projectFiles[targetFile]; const fixResult = await runStrictFixLoop({ userId, conversationId, language: lang, initialCode: originalCode, currentVersion, signal: null }); if (fixResult.ok) { try { await upsertFile({ userId, conversationId, filename: targetFile, content: fixResult.code, language: lang }); await saveArtifact({ userId, conversationId, files: {}, version: currentVersion + 1 }); } catch {} const hasChanged = fixResult.code !== originalCode; const statusMsg = hasChanged ? `✅ Đã sửa xong file \`${targetFile}\`.` : `✅ File \`${targetFile}\` đã kiểm tra, không có lỗi.`; const finalText = `${statusMsg}\n\n\`\`\`${lang}\n${fixResult.code}\n\`\`\``; const delivered = await traKetQuaChoUser({ userId, conversationId, text: finalText, meta: { action: "resume-fixed" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } else { const delivered = await traKetQuaChoUser({ userId, conversationId, text: `⚠ Còn lỗi: ${fixResult.error}`, meta: { action: "resume-fail" } }); return res.json({ ok: true, aiMessage: { ...delivered.aiMessage, id: String(delivered.aiMessage._id) } }); } } catch (err) { return res.status(500).json({ ok: false, message: "Lỗi server" }); } });

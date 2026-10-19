@@ -1,6 +1,5 @@
 // src/store/chatStore.js
-// Nhiệm vụ: Quản lý hội thoại và tin nhắn.
-// Sửa: Khi fetch thất bại/timeout → tải lại từ DB trước khi đánh dấu failed.
+// Nhiệm vụ: Quản lý hội thoại và tin nhắn (Đã nâng cấp Polling cho Background Job)
 
 import React, {
   createContext,
@@ -64,7 +63,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   // ============================================================
-  // GỬI TIN NHẮN
+  // GỬI TIN NHẮN (ĐÃ NÂNG CẤP POLLING)
   // ============================================================
   const sendMessage = useCallback(
     async ({ text, attachments }) => {
@@ -77,13 +76,9 @@ export function ChatProvider({ children }) {
         const created = await createConversation({});
         if (!created.ok) {
           setSending(false);
-          return {
-            ok: false,
-            error: created.error || "Không tạo được hội thoại",
-          };
+          return { ok: false, error: created.error || "Không tạo được hội thoại" };
         }
-        conversationId =
-          created.conversation?.id || created.conversation?._id;
+        conversationId = created.conversation?.id || created.conversation?._id;
         if (!conversationId) {
           setSending(false);
           return { ok: false, error: "Hội thoại mới không có id" };
@@ -103,6 +98,8 @@ export function ChatProvider({ children }) {
       };
       setMessages((prev) => [...prev, tempUserMsg]);
 
+      let isPolling = false;
+
       try {
         const res = await chatApi.sendMessage({
           conversationId,
@@ -111,57 +108,123 @@ export function ChatProvider({ children }) {
           signal: controller.signal,
         });
 
+        // Cập nhật tin nhắn User + thêm indicator "Đang xử lý..."
         setMessages((prev) => {
           const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
           const next = [...withoutTemp];
           if (res?.userMessage) next.push(res.userMessage);
-          if (res?.aiMessage) next.push(res.aiMessage);
+          
+          // Nếu chưa có aiMessage ngay, thêm tin nhắn AI đang tải
+          if (!res?.aiMessage) {
+            next.push({
+              id: "temp-ai-loading",
+              role: "ai",
+              text: "⏳ Đang xử lý...",
+              createdAt: new Date().toISOString(),
+              pending: true
+            });
+          }
           return next;
         });
 
-        try {
-          await loadRecentConversations();
-        } catch {
-          /* bỏ qua */
+        // Trường hợp Backend cũ trả về aiMessage ngay (tương thích ngược)
+        if (res?.aiMessage) {
+          setMessages((prev) => {
+            const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
+            const next = [...withoutTemp];
+            if (res?.userMessage) next.push(res.userMessage);
+            next.push(res.aiMessage);
+            return next;
+          });
+          try { await loadRecentConversations(); } catch {}
+          return { ok: true, aiMessage: res.aiMessage };
         }
 
-        return {
-          ok: true,
-          userMessage: res?.userMessage,
-          aiMessage: res?.aiMessage,
-        };
+        // Trường hợp mới: Có jobId -> Bắt đầu Polling
+        if (res?.jobId) {
+          isPolling = true;
+          const jobId = res.jobId;
+
+          const pollInterval = setInterval(async () => {
+            if (controller.signal.aborted) {
+              clearInterval(pollInterval);
+              setSending(false);
+              setAbortController(null);
+              return;
+            }
+
+            try {
+              const jobRes = await chatApi.getJobStatus(jobId);
+              
+              if (jobRes?.status === "done") {
+                clearInterval(pollInterval);
+                setMessages((prev) => {
+                  const withoutLoading = prev.filter(m => m.id !== "temp-ai-loading");
+                  const result = jobRes.result;
+                  if (result?.aiMessage) {
+                    return [...withoutLoading, result.aiMessage];
+                  }
+                  // Fallback: nếu không có aiMessage object, tạo message text
+                  return [...withoutLoading, {
+                    id: `ai-${Date.now()}`,
+                    role: "ai",
+                    text: result?.text || "(Không có phản hồi)",
+                    createdAt: new Date().toISOString()
+                  }];
+                });
+                setSending(false);
+                setAbortController(null);
+                try { await loadRecentConversations(); } catch {}
+
+              } else if (jobRes?.status === "error") {
+                clearInterval(pollInterval);
+                setMessages((prev) => {
+                  const withoutLoading = prev.filter(m => m.id !== "temp-ai-loading");
+                  return [...withoutLoading, {
+                    id: `err-${Date.now()}`,
+                    role: "ai",
+                    text: `❌ Lỗi: ${jobRes.error}`,
+                    createdAt: new Date().toISOString()
+                  }];
+                });
+                setSending(false);
+                setAbortController(null);
+              }
+              // status === "processing" -> tiếp tục polling
+            } catch (pollErr) {
+              // Lỗi mạng nhỏ trong lúc poll -> bỏ qua, tiếp tục
+            }
+          }, 2000);
+
+          return { ok: true, jobId };
+        }
+
+        // Không có jobId và không có aiMessage -> lỗi
+        throw new Error("Backend không trả về kết quả");
+
       } catch (err) {
-        // ============================================================
-        // FALLBACK: THỬ TẢI LẠI TIN NHẮN TỪ DB
-        // ============================================================
-        // Trường hợp fetch bị timeout / network error — có thể backend
-        // ĐÃ xử lý xong và lưu vào DB. Thử đọc lại xem.
-        // ============================================================
-        const reloadOk = await tryReloadFromDb(conversationId, tempUserMsg);
-
-        if (reloadOk) {
-          try {
-            await loadRecentConversations();
-          } catch {
-            /* bỏ qua */
-          }
-          return { ok: true, reloaded: true };
-        }
-
-        // Không reload được → đánh dấu failed
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === tempUserMsg.id
-              ? { ...m, pending: false, failed: true }
-              : m
-          )
-        );
+        setMessages((prev) => {
+          const withoutTemp = prev.filter((m) => m.id !== tempUserMsg.id);
+          const withoutLoading = withoutTemp.filter(m => m.id !== "temp-ai-loading");
+          return [...withoutLoading, {
+            id: tempUserMsg.id,
+            role: "user",
+            text: text || "",
+            attachments: attachments || [],
+            createdAt: tempUserMsg.createdAt,
+            failed: true
+          }];
+        });
         const msg = err?.message || "Gửi tin nhắn thất bại";
         setError(msg);
-        return { ok: false, error: msg };
-      } finally {
         setSending(false);
         setAbortController(null);
+        return { ok: false, error: msg };
+      } finally {
+        if (!isPolling) {
+          // Chỉ cleanup nếu không polling (polling sẽ tự cleanup khi xong)
+          // (Đã set ở trên rồi, đây là safety net)
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,30 +232,20 @@ export function ChatProvider({ children }) {
   );
 
   // ============================================================
-  // THỬ RELOAD TỪ DB
+  // THỬ RELOAD TỪ DB (giữ nguyên cho fixContinue)
   // ============================================================
   const tryReloadFromDb = useCallback(
     async (conversationId, tempUserMsg) => {
       try {
-        // Chờ 2 giây — cho backend kịp lưu
         await new Promise((r) => setTimeout(r, 2000));
-
         const res = await chatApi.getMessages(conversationId);
         const items = res?.items || [];
-
         if (items.length === 0) return false;
-
-        // Kiểm tra: có tin AI mới hơn tempUserMsg không
         const tempTime = new Date(tempUserMsg.createdAt).getTime();
         const hasNewAi = items.some(
-          (m) =>
-            m.role === "ai" &&
-            new Date(m.createdAt).getTime() >= tempTime - 5000
+          (m) => m.role === "ai" && new Date(m.createdAt).getTime() >= tempTime - 5000
         );
-
         if (!hasNewAi) return false;
-
-        // Có tin AI mới → thay thế toàn bộ messages
         setMessages(items);
         return true;
       } catch {
@@ -241,18 +294,11 @@ export function ChatProvider({ children }) {
 
       return { ok: true, aiMessage: res?.aiMessage };
     } catch (err) {
-      // Fallback reload
       const reloadOk = await tryReloadFromDb(activeConversationId, tempUserMsg);
-      if (reloadOk) {
-        return { ok: true, reloaded: true };
-      }
+      if (reloadOk) return { ok: true, reloaded: true };
 
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempUserMsg.id
-            ? { ...m, pending: false, failed: true }
-            : m
-        )
+        prev.map((m) => m.id === tempUserMsg.id ? { ...m, pending: false, failed: true } : m)
       );
       const msg = err?.message || "Sửa tiếp thất bại";
       setError(msg);
@@ -299,9 +345,7 @@ export function ChatProvider({ children }) {
       setError(null);
       try {
         await chatApi.deleteConversation(conversationId);
-        setRecentConversations((prev) =>
-          prev.filter((c) => c.id !== conversationId)
-        );
+        setRecentConversations((prev) => prev.filter((c) => c.id !== conversationId));
         if (activeConversationId === conversationId) {
           setActiveConversationId(null);
           setMessages([]);
@@ -361,21 +405,9 @@ export function ChatProvider({ children }) {
       reset,
     }),
     [
-      activeConversationId,
-      messages,
-      recentConversations,
-      sending,
-      fixing,
-      error,
-      createConversation,
-      openConversation,
-      sendMessage,
-      fixContinue,
-      cancelSend,
-      loadRecentConversations,
-      deleteConversation,
-      deleteAllConversations,
-      reset,
+      activeConversationId, messages, recentConversations, sending, fixing, error,
+      createConversation, openConversation, sendMessage, fixContinue, cancelSend,
+      loadRecentConversations, deleteConversation, deleteAllConversations, reset,
     ]
   );
 
